@@ -8,6 +8,12 @@ WORKDIR /app
 
 # 3. Instala las dependencias
 COPY requirements.txt .
+
+# --- ¡ESTA ES LA LÍNEA NUEVA QUE ARREGLA EL ERROR! ---
+# Actualizamos pip ANTES de instalar los requirements
+RUN pip install --upgrade pip
+
+# Ahora este comando usará el pip actualizado y encontrará los paquetes
 RUN pip install --no-cache-dir -r requirements.txt
 
 # --- Etapa 4: Copia de tu Código ---
