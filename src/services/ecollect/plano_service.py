@@ -155,7 +155,7 @@ class PlanoService:
 
                 linea = (
                     # Usamos la variable 'nombre_limpio' en lugar de 'nombre'
-                    f"{cedula},01,{correo},,{nombre_limpio},,{correo},,,,,,,"
+                    f"{cedula},01,{correo},,{nombre_limpio},,{correo},,,,,,"
                 )
                 lineas_a_escribir.append(linea)
 

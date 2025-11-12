@@ -10,11 +10,12 @@ class EcollectView(ttk.Frame):
         self.main_window = main_window
         self.controller.set_view(self)
         
-        # --- ¡CAMBIO 1: Añadir la nueva key para colaboradores! ---
+        # --- ¡CAMBIO 1: Añadir la nueva key para el MAESTRO DE CLIENTES! ---
         self.file_paths = {
             "PROCESO_VENCIMIENTOS": tk.StringVar(value="No se han seleccionado archivos."),
             "PROCESO_CONSULTA": tk.StringVar(value="No se ha seleccionado un archivo."),
-            "PROCESO_COLABORADORES": tk.StringVar(value="No se ha seleccionado un archivo.") # <-- AÑADIDO
+            "PROCESO_COLABORADORES": tk.StringVar(value="No se ha seleccionado un archivo."),
+            "PROCESO_MAESTRO_CLIENTES": tk.StringVar(value="No se ha seleccionado un archivo.") # <-- ¡AÑADIDO!
         }
 
         self._create_widgets()
@@ -55,14 +56,12 @@ class EcollectView(ttk.Frame):
         # --- Tarjeta 1: Proceso Clientes ---
         self._create_proceso_unificado_card(main_container)
 
-        # --- ¡CAMBIO 2: Añadir la segunda tarjeta (recuadro) para Colaboradores! ---
+        # --- Tarjeta 2: Proceso Colaboradores ---
         self._create_proceso_colaboradores_card(main_container)
-        # --- FIN CAMBIO 2 ---
 
     def _create_proceso_unificado_card(self, parent):
         """Crea la tarjeta principal para el proceso de E-Collect (CLIENTES)."""
         card_frame = ttk.LabelFrame(parent, text=" Proceso 1: Generación de Planos Clientes ", padding=20)
-        # Usamos pack con fill='x' para que ocupe el ancho y pady para separarse
         card_frame.pack(fill='x', expand=True, pady=(0, 20), padx=10) 
 
         form_frame = ttk.Frame(card_frame)
@@ -87,20 +86,29 @@ class EcollectView(ttk.Frame):
             multiple=False
         )
 
+        # --- ¡CAMBIO 2: Añadir el campo para el MAESTRO DE CLIENTES! ---
+        self._crear_campo_archivo(
+            parent=form_frame,
+            row_start=4, # Nueva fila
+            key="PROCESO_MAESTRO_CLIENTES",
+            desc="3. Seleccionar Archivo de Usuarios cargados(.xlsx):",
+            multiple=False
+        )
+        # --- FIN CAMBIO 2 ---
+
         # --- Botón de Acción ---
+        # --- ¡CAMBIO 3: Mover el botón a la fila 6! ---
         procesar_button = ttk.Button(
             form_frame,
-            text="▶ Iniciar Proceso Clientes", # Texto actualizado
-            command=self.controller.iniciar_proceso_completo, # Llama al método original
+            text="▶ Iniciar Proceso Clientes", 
+            command=self.controller.iniciar_proceso_completo, 
             style='Modern.TButton' 
         )
-        procesar_button.grid(row=4, column=0, columnspan=2, pady=(20, 10), ipady=5)
+        procesar_button.grid(row=6, column=0, columnspan=2, pady=(20, 10), ipady=5) # <-- Fila cambiada de 4 a 6
         
-    # --- ¡CAMBIO 3: Método NUEVO para el recuadro de Colaboradores! ---
     def _create_proceso_colaboradores_card(self, parent):
         """Crea la tarjeta (recuadro) para el proceso de Colaboradores."""
         card_frame = ttk.LabelFrame(parent, text=" Proceso 2: Generación de Planos Colaboradores ", padding=20)
-        # Usamos pack para que se ponga debajo de la tarjeta anterior
         card_frame.pack(fill='x', expand=True, pady=(0, 20), padx=10)
 
         form_frame = ttk.Frame(card_frame)
@@ -113,19 +121,17 @@ class EcollectView(ttk.Frame):
             row_start=0,
             key="PROCESO_COLABORADORES",
             desc="1. Seleccionar Archivo de Colaboradores (.xlsx):",
-            multiple=False # Es un solo archivo
+            multiple=False 
         )
 
         # --- Botón de Acción para Colaboradores ---
         procesar_button = ttk.Button(
             form_frame,
             text="▶ Iniciar Proceso Colaboradores",
-            # ¡Llama a un NUEVO método en el controlador!
             command=self.controller.iniciar_proceso_colaboradores, 
             style='Modern.TButton'
         )
         procesar_button.grid(row=2, column=0, columnspan=2, pady=(20, 10), ipady=5)
-    # --- FIN CAMBIO 3 ---
 
     def _crear_campo_archivo(self, parent, row_start: int, key: str, desc: str, multiple: bool):
         """Función auxiliar (Sin cambios)."""
