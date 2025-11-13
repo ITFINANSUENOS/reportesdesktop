@@ -1,7 +1,7 @@
 # Entorno virtual (cambia el nombre si usas otro)
 entorno/
 venv/
-env/
+.env
 
 # Archivos de Python generados
 __pycache__/

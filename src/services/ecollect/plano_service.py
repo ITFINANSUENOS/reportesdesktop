@@ -15,8 +15,9 @@ class PlanoService:
         num_registros = len(df)
         
         # Suma la columna 'Valor', convierte a entero para quitar decimales, y añade '00'
-        valor_total = df['Valor'].sum()
-        valor_total_formateado = str(int(valor_total)) + '00'
+        valor_total = df['Valor'].apply(lambda x: int(x)).sum()
+        # 'valor_total' ya es un entero, solo lo convertimos a string
+        valor_total_formateado = str(valor_total) + '00'
         
         return f"1,{fecha_actual},{num_registros},{valor_total_formateado},0"
 
