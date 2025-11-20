@@ -40,11 +40,35 @@ class ReportService:
         r91_df = self.data_loader.create_credit_key(self.data_loader.safe_concat(dataframes_por_tipo.get("R91", [])))
         analisis_df = self.data_loader.create_credit_key(self.data_loader.safe_concat(dataframes_por_tipo.get("ANALISIS", [])))
         vencimientos_df = self.data_loader.create_credit_key(self.data_loader.safe_concat(dataframes_por_tipo.get("VENCIMIENTOS", [])))
+        if not vencimientos_df.empty:
+            print("\n📞 Procesando lógica de teléfonos para VENCIMIENTOS...")
+            vencimientos_df = self.cleaning_service.unificar_telefonos_codeudores(
+                vencimientos_df, 
+                col_principal='Celular', 
+                col_secundaria='Celular2',
+                col_destino='Celular',
+                valor_defecto='',
+                solo_10_digitos=True
+            )
         crtmp_df = self.data_loader.create_credit_key(self.data_loader.safe_concat(dataframes_por_tipo.get("CRTMPCONSULTA1", [])))
         fnz003_df = self.data_loader.create_credit_key(self.data_loader.safe_concat(dataframes_por_tipo.get("FNZ003", [])))
         sc04_df = self.data_loader.safe_concat(dataframes_por_tipo.get("SC04", []))
         fnz001_df = self.data_loader.create_credit_key(self.data_loader.safe_concat(dataframes_por_tipo.get("FNZ001", [])))
         r03_df = self.data_loader.create_credit_key(self.data_loader.safe_concat(dataframes_por_tipo.get("R03", [])))
+        if not r03_df.empty:
+            print("\n📞 Procesando lógica especial de teléfonos para R03...")
+            r03_df = self.cleaning_service.unificar_telefonos_codeudores(
+                r03_df, 
+                col_principal='Telefono_Codeudor1', 
+                col_secundaria='Movil_Codeudor1',    
+                col_destino='Telefono_Codeudor1'
+            )
+            r03_df = self.cleaning_service.unificar_telefonos_codeudores(
+                r03_df, 
+                col_principal='Telefono_Codeudor2',
+                col_secundaria='Movil_Codeudor2',   
+                col_destino='Telefono_Codeudor2'
+            )
         matriz_cartera_df = self.data_loader.safe_concat(dataframes_por_tipo.get("MATRIZ_CARTERA", []))
         metas_franjas_df = self.data_loader.safe_concat(dataframes_por_tipo.get("METAS_FRANJAS", []))
         asesores_sheets = dataframes_por_tipo.get("ASESORES", [])
