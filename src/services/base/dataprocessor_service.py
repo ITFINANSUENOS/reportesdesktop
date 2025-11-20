@@ -58,7 +58,7 @@ class ReportProcessorService:
         print("🏗️ Reordenando columnas según la configuración...")
         columnas_a_eliminar = [
             'Saldo_Factura', 'Tipo_Credito', 'Numero_Credito', 'Meta_DC_Al_Dia', 
-            'Meta_DC_Atraso', 'Meta_Atraso',
+            'Meta_DC_Atraso', 'Meta_Atraso','Movil_Codeudor1','Movil_Codeudor2','Celular2',
             *[col for col in reporte_df.columns if col.endswith(('_Analisis', '_R03', '_Venc', '_display'))]
         ]
         reporte_df.drop(columns=columnas_a_eliminar, inplace=True, errors='ignore')
@@ -87,7 +87,7 @@ class ReportProcessorService:
         return df
 
     def _fill_final_na(self, df):
-        print("💅 Aplicando valores por defecto y formato de presentación...")
+        print(" Aplicando valores por defecto y formato de presentación...")
         columnas_vencimiento = {
             'Fecha_Cuota_Vigente': 'VIGENCIA EXPIRADA', 'Cuota_Vigente': 'VIGENCIA EXPIRADA',
             'Valor_Cuota_Vigente': 'VIGENCIA EXPIRADA', 'Fecha_Cuota_Atraso': 'SIN MORA',
