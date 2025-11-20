@@ -38,27 +38,30 @@ configuracion = {
                        "META_ATRAS" : "Meta_Atraso" }
     },
     "VENCIMIENTOS": {
-        "usecols": ["MCNVINCULA", "SALDODOC", "VENCE", "VINTELEFON", "MCNCUOCRU1","MCNTIPCRU1","MCNNUMCRU1"],
+        "usecols": ["MCNVINCULA", "SALDODOC", "VENCE", "VINTELEFON","VINTELEFO3","MCNCUOCRU1","MCNTIPCRU1","MCNNUMCRU1"],
         "rename_map": {"MCNTIPCRU1":"Tipo_Credito", 
                        "MCNNUMCRU1":"Numero_Credito", 
                        "MCNVINCULA": "Cedula_Cliente", 
-                       "VINTELEFON" : "Celular", 
+                       "VINTELEFON" : "Celular",
+                       "VINTELEFO3":"Celular2", 
                        "SALDODOC": "Valor_Cuota_Vigente", 
                        "MCNCUOCRU1": "Cuota_Vigente", 
                        "VENCE": "Fecha_Cuota_Vigente" }
     },
     "R03":{
-        "usecols": ["CODEUDOR1","NOMBRE1","VINTELEFON","CIUNOMBRE1","CODEUDOR2","NOMBRE2",
-                    "VINTELEFO2","CIUNOMBRE2","CEDULA","TIPO","NUMERO"],
+        "usecols": ["CODEUDOR1","NOMBRE1","VINTELEFON","VINMOVIL1","CIUNOMBRE1","CODEUDOR2","NOMBRE2",
+                    "VINTELEFO2","VINMOVIL2","CIUNOMBRE2","CEDULA","TIPO","NUMERO"],
         "rename_map": { 
                        "CODEUDOR1": "Codeudor1", 
                        "NOMBRE1": "Nombre_Codeudor1", 
-                       "VINTELEFON": "Telefono_Codeudor1", 
+                       "VINTELEFON": "Telefono_Codeudor1",
+                       "VINMOVIL1":"Movil_Codeudor1", 
                        "CIUNOMBRE1": "Ciudad_Codeudor1", 
                        "CODEUDOR2": "Codeudor2", 
                        "NOMBRE2": "Nombre_Codeudor2", 
                        "VINTELEFO2": "Telefono_Codeudor2", 
-                       "CIUNOMBRE2": "Ciudad_Codeudor2", 
+                       "CIUNOMBRE2": "Ciudad_Codeudor2",
+                       "VINMOVIL2":"Movil_Codeudor2", 
                        "CEDULA": "Cedula_Cliente",
                        "TIPO":"Tipo_Credito",
                        "NUMERO":"Numero_Credito"}
