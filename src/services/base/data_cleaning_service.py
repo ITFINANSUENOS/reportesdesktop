@@ -74,48 +74,88 @@ class DataCleaningService:
             
         return df
     
+    def _obtener_serie_valida(self, series: pd.Series, solo_10_digitos: bool = False) -> pd.Series:
+        s_temp = series.astype(str)
+        s_temp = s_temp.str.replace(r'\.0$', '', regex=True)
+        telefonos_limpios = s_temp.str.replace(r'\D', '', regex=True)
+
+        # Reglas de 10 dígitos (Celular y Fijo Nacional)
+        es_celular_valido = (telefonos_limpios.str.len() == 10) & (telefonos_limpios.str.startswith('3'))
+        es_fijo_nacional_valido = (telefonos_limpios.str.len() == 10) & (telefonos_limpios.str.startswith('60'))
+        
+        # Regla de 7 dígitos (Fijo Local)
+        prefijos_fijos_validos = ('2', '4', '5', '6', '7', '8')
+        es_fijo_local_valido = (telefonos_limpios.str.len() == 7) & (telefonos_limpios.str.startswith(prefijos_fijos_validos))
+        
+        no_son_repetidos = telefonos_limpios.apply(lambda x: len(set(x)) > 1 if len(x) > 0 else False)
+        
+        if solo_10_digitos:
+            mask_formato_valido = (es_celular_valido | es_fijo_nacional_valido)
+        else:
+            mask_formato_valido = (es_celular_valido | es_fijo_nacional_valido | es_fijo_local_valido)
+
+
+        mask_final_valido = mask_formato_valido & no_son_repetidos
+        return telefonos_limpios.where(mask_final_valido, np.nan)
+
     def clean_phone_numbers(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Limpia y valida números de teléfono en columnas específicas según las reglas de Colombia,
-        incluyendo filtros por prefijos y números repetidos.
+        Limpia y valida números de teléfono en columnas específicas.
+        (Refactorizado para usar _obtener_serie_valida, manteniendo la funcionalidad original).
         """
         print("📞 Limpiando y validando números de teléfono (lógica estricta)...")
-        
         columnas_telefono = ['Celular', 'Telefono_Codeudor1', 'Telefono_Codeudor2']
+        
         for col in columnas_telefono:
             if col not in df.columns:
-                print(f"   - ℹ️ Columna '{col}' no encontrada. Se omite.")
-                continue
-
+                continue # Si no existe, pasa silenciosamente como en tu original o imprime log
+            
             mask_sin_codeudor = df[col] == 'SIN CODEUDOR'
-            telefonos_limpios = df[col].astype(str).str.replace(r'\D', '', regex=True)
-
-            # 3. Definimos las reglas de validación para Colombia
-            es_celular_valido = (telefonos_limpios.str.len() == 10) & (telefonos_limpios.str.startswith('3'))
-            es_fijo_nacional_valido = (telefonos_limpios.str.len() == 10) & (telefonos_limpios.str.startswith('60'))
             
-            prefijos_fijos_validos = ('2', '4', '5', '6', '7', '8')
-            es_fijo_local_valido = (telefonos_limpios.str.len() == 7) & (telefonos_limpios.str.startswith(prefijos_fijos_validos))
-            no_son_repetidos = telefonos_limpios.apply(lambda x: len(set(x)) > 1 if x else True)
-            mask_formato_valido = es_celular_valido | es_fijo_nacional_valido | es_fijo_local_valido
-            mask_final_valido = mask_formato_valido & no_son_repetidos
+            # Usamos la lógica centralizada
+            serie_validada = self._obtener_serie_valida(df[col])
             
-            # 4. Asignamos los números limpios solo a las filas que son válidas
-            df[col] = telefonos_limpios.where(mask_final_valido, np.nan)
-
-            # 5. Asignamos el valor por defecto a los inválidos
-            if col == 'Celular':
-                df[col] = df[col].fillna('')
-            else:
-                df[col] = df[col].fillna('SIN CODEUDOR')
+            # Asignamos
+            df[col] = serie_validada
             
-            # 6. Restauramos los valores originales 'SIN CODEUDOR'
+            # Relleno de NaNs según tu lógica original
+            valor_relleno = '' if col == 'Celular' else 'SIN CODEUDOR'
+            df[col] = df[col].fillna(valor_relleno)
+            
+            # Restauramos SIN CODEUDOR explícitos originales si es necesario
             df.loc[mask_sin_codeudor, col] = 'SIN CODEUDOR'
             
             print(f"   - ✅ Columna '{col}' procesada.")
 
         return df
 
+    def unificar_telefonos_codeudores(self, df: pd.DataFrame, col_principal: str, col_secundaria: str, col_destino: str, valor_defecto: str = 'SIN CODEUDOR', solo_10_digitos: bool = False) -> pd.DataFrame:
+        """
+        Ahora acepta el parámetro 'solo_10_digitos' para pasarlo a la validación.
+        """
+        print(f"   - 🔄 Unificando teléfonos para {col_destino}...")
+        
+        # 1. Validar ambas columnas pasando el flag de estricto
+        s_principal_valida = pd.Series(np.nan, index=df.index)
+        if col_principal in df.columns:
+            s_principal_valida = self._obtener_serie_valida(df[col_principal], solo_10_digitos=solo_10_digitos)
+
+        s_secundaria_valida = pd.Series(np.nan, index=df.index)
+        if col_secundaria and col_secundaria in df.columns:
+            s_secundaria_valida = self._obtener_serie_valida(df[col_secundaria], solo_10_digitos=solo_10_digitos)
+        
+        # 2. Aplicar la lógica de selección
+        df[col_destino] = np.where(
+            s_principal_valida.notna(), 
+            s_principal_valida, 
+            s_secundaria_valida
+        )
+        
+        # 3. Llenar vacíos
+        df[col_destino] = df[col_destino].fillna(valor_defecto)
+        
+        return df
+    
     def run_cleaning_pipeline(self, reporte_df: pd.DataFrame) -> pd.DataFrame:
         """
         Punto de entrada principal para ejecutar todos los pasos de limpieza.
