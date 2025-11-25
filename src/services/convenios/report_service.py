@@ -16,34 +16,48 @@ class ReportWriter:
         'Valor Aprovechamientos', 'Casa cobranza', 'Empleado', 'Novedad', 'Cuentas ARP', 
         'Cuentas FS','SALDOS','VALIDACION ULTIMO SALDO'
     ]
+    # Nuevo orden para Ecollect basado en sus columnas de entrada
+    COLUMN_ORDER_ECOLLECT = [
+        '#TRANS', 'REFERENCIA 1', 'FECHA INICIO', 'CANAL DE PAGO', 'Valor',
+        'Documento Cartera', 'C. Costo', 'Empresa', 'Valor Aplicar', 'Valor Anticipos',
+        'Valor Aprovechamientos', 'Casa cobranza', 'Empleado', 'Novedad', 'Cuentas ARP',
+        'Cuentas FS', 'SALDOS', 'VALIDACION ULTIMO SALDO'
+    ]
 
-    def save_report(self, output_path: str, df_bancolombia: pd.DataFrame, df_efecty: pd.DataFrame):
-        if df_bancolombia.empty and df_efecty.empty:
+    def save_report(self, output_path: str, df_bancolombia: pd.DataFrame, df_efecty: pd.DataFrame, df_ecollect: pd.DataFrame):
+        if df_bancolombia.empty and df_efecty.empty and df_ecollect.empty:
             raise ValueError("No se encontraron datos de pago para generar el reporte.")
 
-        # Volvemos a la versión con estilos
+        # Aplicar formato y reordenamiento
         df_bancolombia = self._format_and_reorder_data(df_bancolombia, 'bancolombia')
         df_efecty = self._format_and_reorder_data(df_efecty, 'efecty')
+        df_ecollect = self._format_and_reorder_data(df_ecollect, 'ecollect')
 
         final_path = Path(output_path)
         temp_dir = final_path.parent
         temp_file_path = temp_dir / f"temp_{os.getpid()}_{final_path.name}"
         
         try:
-            # --- LÍNEA MODIFICADA ---
-            # Cambiamos el motor de 'openpyxl' a 'xlsxwriter'
             with pd.ExcelWriter(temp_file_path, engine='xlsxwriter') as writer:
                 
-                # El resto de la lógica para escribir las hojas con estilos es la misma
                 wrote_something = False
+                
+                # Guardar Bancolombia
                 if not df_bancolombia.empty:
                     styled_bancolombia = self._apply_styles(df_bancolombia)
                     styled_bancolombia.to_excel(writer, sheet_name='Bancolombia', index=False)
                     wrote_something = True
                 
+                # Guardar Efecty
                 if not df_efecty.empty:
                     styled_efecty = self._apply_styles(df_efecty)
                     styled_efecty.to_excel(writer, sheet_name='Efecty', index=False)
+                    wrote_something = True
+
+                # Guardar Ecollect (NUEVO)
+                if not df_ecollect.empty:
+                    styled_ecollect = self._apply_styles(df_ecollect)
+                    styled_ecollect.to_excel(writer, sheet_name='Ecollect', index=False)
                     wrote_something = True
 
                 if not wrote_something:
@@ -64,10 +78,15 @@ class ReportWriter:
         if df.empty:
             return df
 
-        # Formato de Fecha
+        # Formato de Fecha (Genérico)
         if 'Fecha' in df.columns:
             df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce').dt.strftime('%d/%m/%Y')
         
+        # Formato específico para Ecollect
+        if df_type == 'ecollect':
+            if 'FECHA INICIO' in df.columns:
+                df['FECHA INICIO'] = pd.to_datetime(df['FECHA INICIO'], errors='coerce').dt.strftime('%d/%m/%Y')
+
         # Formato específico de Bancolombia
         if df_type == 'bancolombia':
             if 'Referencia 1' in df.columns:
@@ -75,13 +94,20 @@ class ReportWriter:
             if 'Referencia 2' in df.columns:
                 df['Referencia 2'] = df['Referencia 2'].apply(self._clean_reference)
 
-        # Reordenar columnas
-        order = self.COLUMN_ORDER_BANCOLOMBIA if df_type == 'bancolombia' else self.COLUMN_ORDER_EFECTY
+        # Selección de orden de columnas
+        if df_type == 'bancolombia':
+            order = self.COLUMN_ORDER_BANCOLOMBIA
+        elif df_type == 'efecty':
+            order = self.COLUMN_ORDER_EFECTY
+        elif df_type == 'ecollect':
+            order = self.COLUMN_ORDER_ECOLLECT
+        else:
+            order = df.columns.tolist()
         
         # Asegurar que todas las columnas existan para evitar errores
         for col in order:
             if col not in df.columns:
-                df[col] = None # o pd.NA
+                df[col] = None 
 
         return df[order]
 

@@ -41,9 +41,13 @@ class DataLoader:
     def prepare_data(self, dfs: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
         """Pre-procesa los DataFrames, convirtiendo columnas clave a string."""
         string_columns = {
-            'PAGOS BANCOLOMBIA': ['Referencia 1', 'Referencia 2'], 'PAGOS EFECTY': ['Identificación'],
-            'EMPLEADOS ACTUALES': ['vincedula'], 'AC FS': ['CEDULA_FS', 'FACTURA_FS'],
-            'AC ARP': ['CEDULA_ARP', 'FACTURA_ARP'], 'CASA DE COBRANZA': ['FACTURA'],
+            'PAGOS BANCOLOMBIA': ['Referencia 1', 'Referencia 2'], 
+            'PAGOS EFECTY': ['Identificación'],
+            'PAGOS ECOLLECT': ['REFERENCIA 1'],
+            'EMPLEADOS ACTUALES': ['vincedula'],
+            'AC FS': ['CEDULA_FS', 'FACTURA_FS'],
+            'AC ARP': ['CEDULA_ARP', 'FACTURA_ARP'], 
+            'CASA DE COBRANZA': ['FACTURA'],
             'CODEUDORES': ['DOCUMENTO_CODEUDOR']
         }
         for sheet, cols in string_columns.items():

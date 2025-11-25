@@ -8,13 +8,24 @@ class DataProcessor:
 
     BANCOLOMBIA_SHEET_NAME = 'PAGOS BANCOLOMBIA'
     EFECTY_SHEET_NAME = 'PAGOS EFECTY'
+    ECOLLECT_SHEET_NAME = 'PAGOS ECOLLECT'
 
     def __init__(self, config: ConveniosConfig):
         self.config = config
 
     def process_payment_type(self, dfs: Dict[str, pd.DataFrame], payment_type: str) -> pd.DataFrame:
-        """Orquesta el procesamiento para un tipo de pago (Bancolombia o Efecty)."""
-        payment_df_name = self.BANCOLOMBIA_SHEET_NAME if payment_type == 'bancolombia' else self.EFECTY_SHEET_NAME
+        """Orquesta el procesamiento para un tipo de pago (Bancolombia, Efecty o Ecollect)."""
+        
+        # Selección dinámica de la hoja según el tipo
+        if payment_type == 'bancolombia':
+            payment_df_name = self.BANCOLOMBIA_SHEET_NAME
+        elif payment_type == 'efecty':
+            payment_df_name = self.EFECTY_SHEET_NAME
+        elif payment_type == 'ecollect':
+            payment_df_name = self.ECOLLECT_SHEET_NAME
+        else:
+            print(f"Tipo de pago desconocido: {payment_type}")
+            return pd.DataFrame()
         
         if payment_df_name not in dfs or dfs[payment_df_name].empty:
             print(f"DEBUG: Hoja '{payment_df_name}' está vacía o no se encontró. No se procesará.")
@@ -61,7 +72,15 @@ class DataProcessor:
         factura_original = np.where(df['FACTURA_FS'].notna(), df['FACTURA_FS'], df['FACTURA_ARP'])
         df['FACTURA FINAL'] = np.where(df['TOTAL_CUENTAS'] > 1, 'Mas de una cartera', factura_original).astype(str)
         df['FACTURA FINAL'].replace('nan', 'SIN CARTERA', inplace=True)
-        df.drop_duplicates(subset=list(dfs[f'PAGOS {payment_type.upper()}'].columns), keep='first', inplace=True)
+        
+        # Eliminar duplicados basándose en las columnas originales del archivo de pago
+        # Nota: Usamos la lógica dinámica para detectar el nombre de la hoja original
+        original_sheet_name = ''
+        if payment_type == 'bancolombia': original_sheet_name = self.BANCOLOMBIA_SHEET_NAME
+        elif payment_type == 'efecty': original_sheet_name = self.EFECTY_SHEET_NAME
+        elif payment_type == 'ecollect': original_sheet_name = self.ECOLLECT_SHEET_NAME
+        
+        df.drop_duplicates(subset=list(dfs[original_sheet_name].columns), keep='first', inplace=True)
 
         # Fusión de saldos unificados
         df_saldos_unificados = pd.concat([
@@ -79,6 +98,10 @@ class DataProcessor:
 
     def _calculate_final_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calcula todas las columnas derivadas para el reporte final."""
+        # ECOLLECT suele usar 'VALOR' (mayúscula) mientras otros usan 'Valor'. Normalizamos si es necesario.
+        if 'VALOR' in df.columns and 'Valor' not in df.columns:
+             df.rename(columns={'VALOR': 'Valor'}, inplace=True)
+
         df.rename(columns={'SALDO': 'SALDOS'}, inplace=True)
         df['SALDOS'] = pd.to_numeric(df['SALDOS'], errors='coerce').fillna(0)
         df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce').fillna(0)
