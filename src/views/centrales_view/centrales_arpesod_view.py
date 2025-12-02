@@ -82,6 +82,12 @@ class CentralesArpesodView(ttk.Frame):
         ttk.Button(cifin_frame, text="▶ Generar Reporte CIFIN", command=self.procesar_cifin, style='Accent.TButton').grid(row=4, column=0, columnspan=2, pady=(20, 10))
         cifin_frame.grid_columnconfigure(0, weight=1)
         
+    def update_status(self, mensaje):
+        """
+        Este método es llamado por el Controlador para reportar progreso.
+        """
+        print(f"[VISTA STATUS]: {mensaje}")    
+        
     # --- Métodos de la clase (sin cambios) ---
     def seleccionar_dc_plano(self):
         filepath = filedialog.askopenfilename(title="Seleccionar plano Datacredito", filetypes=[("Archivos de Texto", "*.txt")])
@@ -92,7 +98,21 @@ class CentralesArpesodView(ttk.Frame):
         if filepath: self.dc_correcciones_path.set(filepath)
         
     def procesar_datacredito(self):
-        messagebox.showinfo("Proceso Datacredito", "Iniciando proceso para Datacredito...")
+        plano = self.dc_plano_path.get()
+        correcciones = self.dc_correcciones_path.get()
+
+        if not plano:
+            messagebox.showwarning("Faltan datos", "Por favor selecciona el archivo Plano (.txt)")
+            return
+        if not correcciones:
+            messagebox.showwarning("Faltan datos", "Por favor selecciona el archivo de Correcciones (.xlsx)")
+            return
+        # 2. Configurar la empresa en el controlador
+        self.datacredito_controller.set_empresa_actual("arpesod")
+
+        # 3. LLAMAR AL CONTROLADOR (Esto es lo que faltaba)
+        # Pasamos 'self' porque el controlador espera la vista como primer argumento
+        self.datacredito_controller.run_processing_datacredito(self, plano, correcciones)
         
     def seleccionar_cifin_plano(self):
         filepath = filedialog.askopenfilename(title="Seleccionar plano CIFIN", filetypes=[("Archivos de texto", "*.txt")])

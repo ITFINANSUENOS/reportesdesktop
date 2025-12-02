@@ -1,7 +1,7 @@
 from tkinter import messagebox, filedialog
 from src.models.cifin_model import CifinModel
 from src.views.cifin_view import CifinView
-from src.services.cifin.cifin_service import FinansuenosDataProcessorService
+from src.services.centrales.finansueños.cifin_service import FinansuenosDataProcessorService
 from src.services.centrales.arpesod.cifin_service import ArpesodDataProcessorService
 
 class CifinController:

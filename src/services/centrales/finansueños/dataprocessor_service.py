@@ -1,10 +1,11 @@
 import pandas as pd
 
-class DataProcessorService:
+class FinansuenosDataProcessorService:
     """Clase responsable de todas las transformaciones de datos."""
-    def __init__(self, df, ruta_correcciones):
+    def __init__(self, df, ruta_correcciones,column_map=None):
         self.df = df
         self.ruta_correcciones = ruta_correcciones
+        self.column_map = column_map
 
     def run_all_transformations(self):
         """Ejecuta todos los pasos de limpieza y formato en orden."""
@@ -49,7 +50,7 @@ class DataProcessorService:
         
         # A. Procesando FNZ001
         df_fnz = pd.read_excel(self.ruta_correcciones, sheet_name='FNZ001', usecols=['DSM_TP', 'DSM_NUM', 'VLR_FNZ'])
-        df_fnz['VLR_FNZ'] = (pd.to_numeric(df_fnz['VLR_FNZ'], errors='coerce').fillna(0) / 1000).astype(int)
+        df_fnz['VLR_FNZ'] = (pd.to_numeric(df_fnz['VLR_FNZ'], errors='coerce').fillna(0)).astype(int)
         df_fnz['llave_base'] = df_fnz['DSM_TP'].astype(str).str.strip() + df_fnz['DSM_NUM'].astype(str).str.strip()
         tabla_fnz = pd.concat([pd.DataFrame({'FACTURA': df_fnz['llave_base'], 'VALOR': df_fnz['VLR_FNZ']}), pd.DataFrame({'FACTURA': df_fnz['llave_base'] + 'C1', 'VALOR': df_fnz['VLR_FNZ']}), pd.DataFrame({'FACTURA': df_fnz['llave_base'] + 'C2', 'VALOR': df_fnz['VLR_FNZ']})])
         tabla_fnz['FACTURA'] = tabla_fnz['FACTURA'].astype(str).str.zfill(18)

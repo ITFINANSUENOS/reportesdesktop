@@ -43,3 +43,5 @@ class CentralesMenuView(ttk.Frame):
             command=lambda: self.main_window_controller.mostrar_vista("centrales_finansuenos"),
             style='Accent.TButton'  # <-- ESTILO AÑADIDO
         ).pack(pady=10, ipadx=20, ipady=10)
+        
+        

@@ -36,7 +36,7 @@ class ArpesodDataProcessorService:
     def run_all_transformations(self):
         print("Servicio: Ejecutando todas las transformaciones...")
         self._correct_data_from_excel()     # Filtra filas
-        self._update_data_from_sheets()     # Cruce de saldos (REPARADO)
+        self._update_data_from_sheets()     # Cruce de saldos 
         self._clean_and_validate_data()     # Limpieza general
         
         # Correcciones específicas antes del formato final
@@ -52,24 +52,59 @@ class ArpesodDataProcessorService:
     
     # --- PASO 1: FILTRADO ---
     def _correct_data_from_excel(self):
-        print("  - Corrigiendo y filtrando datos desde Excel...")
+        print("  - Gestionando lista de exclusión (R91 -> CEDULAS_NO_REPORTAR)...")
         try:
+            # 1. Leer datos existentes forzando todo a string para evitar errores de tipo
             df_R91 = pd.read_excel(self.ruta_correcciones, sheet_name='R91', usecols=['MCDZONA', 'MCDVINCULA', 'VINNOMBRE'], dtype=str)
-            df_cedulas = pd.read_excel(self.ruta_correcciones, sheet_name='CEDULAS_NO_REPORTAR', usecols=['NIT', 'NOMBRE'], dtype=str)
+            df_cedulas_existentes = pd.read_excel(self.ruta_correcciones, sheet_name='CEDULAS_NO_REPORTAR', dtype=str)
             df_facturas = pd.read_excel(self.ruta_correcciones, sheet_name='FACTURAS_ELIMINAR', dtype=str)
         except Exception as e:
             print(f"❌ ERROR leyendo Excel correcciones: {e}")
             return
 
-        cedulas_1CE = df_R91[df_R91['MCDZONA'] == '1CE'][['MCDVINCULA', 'VINNOMBRE']].rename(columns={'MCDVINCULA': 'NIT', 'VINNOMBRE': 'NOMBRE'})
-        df_cedulas_completo = pd.concat([df_cedulas, cedulas_1CE]).drop_duplicates(subset=['NIT'])
+        # 2. Identificar candidatos en R91 (Zona '1CE')
+        # Renombramos columnas para coincidir con la estructura de CEDULAS_NO_REPORTAR
+        candidatos_nuevos = df_R91[df_R91['MCDZONA'] == '1CE'][['MCDVINCULA', 'VINNOMBRE']].copy()
+        candidatos_nuevos.rename(columns={'MCDVINCULA': 'NIT', 'VINNOMBRE': 'NOMBRE'}, inplace=True)
         
+        # Limpieza preventiva de espacios
+        candidatos_nuevos['NIT'] = candidatos_nuevos['NIT'].str.strip()
+        candidatos_nuevos['NOMBRE'] = candidatos_nuevos['NOMBRE'].str.strip()
+        
+        # 3. Validar cuáles son REALMENTE nuevos
+        # Creamos un set de los NITs que ya tenemos guardados
+        nits_existentes = set(df_cedulas_existentes['NIT'].astype(str).str.strip())
+        # Filtramos: Solo nos quedamos con los que NO estan en el set de existentes
+        nuevos_para_agregar = candidatos_nuevos[~candidatos_nuevos['NIT'].isin(nits_existentes)].drop_duplicates(subset=['NIT'])
+        df_cedulas_completo = df_cedulas_existentes # Por defecto, usamos lo que ya había
+        # 4. Si hay nuevos, actualizamos el Excel y la variable en memoria
+        if not nuevos_para_agregar.empty:
+            print(f"    -> Se encontraron {len(nuevos_para_agregar)} registros nuevos '1CE' en R91. Actualizando Excel...")
+            
+            # Concatenamos los viejos con los nuevos
+            df_cedulas_completo = pd.concat([df_cedulas_existentes, nuevos_para_agregar], ignore_index=True)
+            # GUARDAMOS en el Excel físico
+            try:
+                with pd.ExcelWriter(self.ruta_correcciones, mode='a', engine='openpyxl', if_sheet_exists='replace') as writer:
+                    df_cedulas_completo.to_excel(writer, sheet_name='CEDULAS_NO_REPORTAR', index=False)
+                print("    ✅ Hoja 'CEDULAS_NO_REPORTAR' actualizada exitosamente.")
+            except Exception as e:
+                print(f"    ⚠️ No se pudo actualizar el Excel (quizás está abierto): {e}")
+        else:
+            print("    -> No hay nuevos casos '1CE' para agregar a la lista negra.")
+
+        # --- APLICAR EL FILTRO AL DATAFRAME PRINCIPAL ---
+        print("  - Filtrando filas usando la lista actualizada...")
+        # Usamos df_cedulas_completo que ya tiene 
         nits_eliminar = set(df_cedulas_completo['NIT'].astype(str).str.strip())
         col_id = self.map['id_number']
         
-        # Usamos lstrip('0') para que coincida aunque el archivo plano tenga ceros
+        # Filtro de Cédulas
+        initial_len = len(self.df)
         self.df = self.df[~self.df[col_id].astype(str).str.strip().str.lstrip('0').isin(nits_eliminar)]
+        print(f"    -> Se eliminaron {initial_len - len(self.df)} registros por Cédula (Lista Negra).")
         
+        # Filtro de Facturas 
         facturas_eliminar = set(df_facturas['NUMERO DE LA CUENTA U OBLIGACION'].astype(str).str.strip())
         col_obligacion = self.map['account_number']
         self.df = self.df[~self.df[col_obligacion].astype(str).str.strip().isin(facturas_eliminar)]

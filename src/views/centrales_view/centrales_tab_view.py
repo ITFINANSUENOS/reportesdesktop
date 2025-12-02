@@ -1,24 +1,29 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
+# 1. CLASE BASE (DISEÑO Y FUNCIONES COMUNES)
 class BaseCentralesView(ttk.Frame):
     """
-    CLASE BASE: Ahora incluye la estructura de scroll y centrado.
-    Se ha eliminado el botón 'Volver', ya que no es necesario con las pestañas.
+    Clase Padre: Maneja toda la interfaz gráfica, el scroll y la selección de archivos.
+    No sabe qué empresa es, eso se lo dicen las clases hijas.
     """
     def __init__(self, parent, datacredito_controller, cifin_controller, empresa_name):
         super().__init__(parent)
         self.datacredito_controller = datacredito_controller
         self.cifin_controller = cifin_controller
-        self.empresa_name = empresa_name
+        self.empresa_name = empresa_name.lower() # Guardamos en minúscula para lógica interna
         
+        # Variables de rutas
         self.dc_plano_path = tk.StringVar()
         self.dc_correcciones_path = tk.StringVar()
         self.cifin_plano_path = tk.StringVar()
         self.cifin_correcciones_path = tk.StringVar()
 
-        self.configure(style='TFrame')
-        
+        self._init_ui(empresa_name)
+
+    def _init_ui(self, title_text):
+        """Configura toda la interfaz con Scroll."""
+        # Configuración del Canvas y Scrollbar
         canvas = tk.Canvas(self, bg="#F0F0F0", highlightthickness=0)
         scrollbar = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
@@ -27,136 +32,151 @@ class BaseCentralesView(ttk.Frame):
         self.scrollable_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
         
-        def _on_canvas_configure(event):
-            canvas.itemconfig(self.scrollable_window, width=event.width)
-
-        canvas.bind("<Configure>", _on_canvas_configure)
+        # Ajustar ancho del frame interno al cambiar tamaño de ventana
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(self.scrollable_window, width=e.width))
         
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        # --- Rejilla 5%-90%-5% en el scrollable_frame para centrar ---
-        scrollable_frame.grid_columnconfigure(0, weight=5)
-        scrollable_frame.grid_columnconfigure(1, weight=90)
-        scrollable_frame.grid_columnconfigure(2, weight=5)
+        # --- Grid Layout para centrar contenido (5% - 90% - 5%) ---
+        scrollable_frame.grid_columnconfigure(0, weight=1)
+        scrollable_frame.grid_columnconfigure(1, weight=10)
+        scrollable_frame.grid_columnconfigure(2, weight=1)
 
-        # --- Contenedor que irá en la columna central ---
-        content_container = ttk.Frame(scrollable_frame)
-        content_container.grid(row=0, column=1, sticky="nsew")
+        content = ttk.Frame(scrollable_frame)
+        content.grid(row=0, column=1, sticky="nsew", pady=20)
 
-        # --- Título Principal ---
-        ttk.Label(content_container, text=f"Centrales {empresa_name.upper()}", style='Title.TLabel').pack(pady=(20, 20))
+        # --- Título ---
+        ttk.Label(content, text=f"Centrales {title_text}", font=("Helvetica", 16, "bold")).pack(pady=(0, 20))
 
-        # --- SECCIÓN DATACREDITO ---
-        dc_frame = ttk.LabelFrame(content_container, text=" Datacredito ", padding="15")
+        # --- SECCIÓN DATACRÉDITO ---
+        dc_frame = ttk.LabelFrame(content, text=" Proceso Datacrédito ", padding="15")
         dc_frame.pack(fill=tk.X, expand=True, pady=10)
         
-        ttk.Label(dc_frame, text="1. Cargar Archivo Plano (.txt):").grid(row=0, column=0, sticky="w", pady=(0, 5))
-        ttk.Entry(dc_frame, textvariable=self.dc_plano_path, width=60, state="readonly").grid(row=1, column=0, sticky="ew", padx=(0, 10))
-        ttk.Button(dc_frame, text="Seleccionar...", command=self._select_dc_plano).grid(row=1, column=1, sticky="ew")
+        self._crear_selector_archivo(dc_frame, "1. Archivo Plano (.txt):", self.dc_plano_path, "*.txt", 0)
+        self._crear_selector_archivo(dc_frame, "2. Correcciones (.xlsx):", self.dc_correcciones_path, "*.xlsx", 2)
         
-        ttk.Label(dc_frame, text="2. Cargar Correcciones (.xlsx):").grid(row=2, column=0, sticky="w", pady=(15, 5))
-        ttk.Entry(dc_frame, textvariable=self.dc_correcciones_path, width=60, state="readonly").grid(row=3, column=0, sticky="ew", padx=(0, 10))
-        ttk.Button(dc_frame, text="Seleccionar...", command=self._select_dc_corrections).grid(row=3, column=1, sticky="ew")
-        
-        ttk.Button(dc_frame, text="▶ Generar Reporte Datacredito", command=self._process_datacredito, style='Modern.TButton').grid(row=4, column=0, columnspan=2, pady=(20, 10), ipady=5)
-        dc_frame.grid_columnconfigure(0, weight=1)
-        
-        
-        self.status_label = ttk.Label(content_container, text="Listo", style="Status.TLabel", anchor="center")
-        self.status_label.pack(fill=tk.X, pady=(20, 10))
-
+        ttk.Button(dc_frame, text="▶ Generar Reporte Datacrédito", command=self._process_datacredito, style='Accent.TButton').grid(row=4, column=0, columnspan=3, pady=15, sticky="ew")
+        dc_frame.grid_columnconfigure(1, weight=1)
 
         # --- SECCIÓN CIFIN ---
-        cifin_frame = ttk.LabelFrame(content_container, text=" CIFIN ", padding="15")
-        cifin_frame.pack(fill=tk.X, expand=True, pady=10)
+        cifin_frame = ttk.LabelFrame(content, text=" Proceso CIFIN ", padding="15")
+        cifin_frame.pack(fill=tk.X, expand=True, pady=20)
 
-        ttk.Label(cifin_frame, text="1. Cargar Archivo Plano CIFIN (.txt):").grid(row=0, column=0, sticky="w", pady=(0, 5))
-        ttk.Entry(cifin_frame, textvariable=self.cifin_plano_path, width=60, state="readonly").grid(row=1, column=0, sticky="ew", padx=(0, 10))
-        ttk.Button(cifin_frame, text="Seleccionar...", command=self._select_cifin_plano).grid(row=1, column=1, sticky="ew")
+        self._crear_selector_archivo(cifin_frame, "1. Archivo Plano CIFIN (.txt):", self.cifin_plano_path, "*.txt", 0)
+        self._crear_selector_archivo(cifin_frame, "2. Correcciones (.xlsx):", self.cifin_correcciones_path, "*.xlsx", 2)
+        
+        ttk.Button(cifin_frame, text="▶ Generar Reporte CIFIN", command=self._process_cifin, style='Accent.TButton').grid(row=4, column=0, columnspan=3, pady=15, sticky="ew")
+        cifin_frame.grid_columnconfigure(1, weight=1)
 
-        ttk.Label(cifin_frame, text="2. Cargar Correcciones (.xlsx):").grid(row=2, column=0, sticky="w", pady=(15, 5))
-        ttk.Entry(cifin_frame, textvariable=self.cifin_correcciones_path, width=60, state="readonly").grid(row=3, column=0, sticky="ew", padx=(0, 10))
-        ttk.Button(cifin_frame, text="Seleccionar...", command=self._select_cifin_corrections).grid(row=3, column=1, sticky="ew")
-        
-        ttk.Button(cifin_frame, text="▶ Generar Reporte CIFIN", command=self._process_cifin, style='Modern.TButton').grid(row=4, column=0, columnspan=2, pady=(20, 10), ipady=5)
-        cifin_frame.grid_columnconfigure(0, weight=1)
-        
-        
-    # --- AÑADIDO: El método que el controlador necesita ---
+        # --- Barra de Estado ---
+        self.status_label = ttk.Label(content, text="Listo para procesar.", foreground="gray")
+        self.status_label.pack(pady=10)
+
+    def _crear_selector_archivo(self, parent, label_text, variable, file_ext, row):
+        """Helper para no repetir código de selectores."""
+        ttk.Label(parent, text=label_text).grid(row=row, column=0, sticky="w", pady=(5, 0))
+        ttk.Entry(parent, textvariable=variable, state="readonly").grid(row=row+1, column=0, columnspan=2, sticky="ew", padx=(0, 5))
+        ttk.Button(parent, text="📂", width=4, 
+                   command=lambda: self._seleccionar_archivo(variable, file_ext)
+        ).grid(row=row+1, column=2, sticky="w")
+
+    def _seleccionar_archivo(self, variable, extension):
+        ftypes = [("Archivos", extension), ("Todos", "*.*")]
+        path = filedialog.askopenfilename(filetypes=ftypes)
+        if path: variable.set(path)
+
+    # --- MÉTODO VITAL PARA EL CONTROLADOR ---
     def update_status(self, message):
-        """Actualiza la etiqueta de estado de esta vista."""
+        """El controlador llama a esto para mostrar progreso."""
+        print(f"[VISTA {self.empresa_name.upper()}]: {message}") # Log consola
         self.status_label.config(text=message)
-        self.update_idletasks() # Asegura que la UI se refresque inmediatamente
+        self.update_idletasks() # Fuerza actualización visual inmediata
 
-    def _select_dc_plano(self):
-        filepath = filedialog.askopenfilename(title="Seleccionar plano Datacredito", filetypes=[("Archivos de Texto", "*.txt")])
-        if filepath: self.dc_plano_path.set(filepath)
-    def _select_dc_corrections(self):
-        filepath = filedialog.askopenfilename(title="Seleccionar correcciones Datacredito", filetypes=[("Archivos de Excel", "*.xlsx")])
-        if filepath: self.dc_correcciones_path.set(filepath)
-    def _select_cifin_plano(self):
-        filepath = filedialog.askopenfilename(title="Seleccionar plano CIFIN", filetypes=[("Archivos de texto", "*.txt")])
-        if filepath: self.cifin_plano_path.set(filepath)
-    def _select_cifin_corrections(self):
-        filepath = filedialog.askopenfilename(title="Seleccionar correcciones CIFIN", filetypes=[("Archivos Excel", "*.xlsx")])
-        if filepath: self.cifin_correcciones_path.set(filepath)
+    # --- MÉTODOS ABSTRACTOS (Las hijas deben implementar la lógica de validación) ---
     def _process_datacredito(self):
-        raise NotImplementedError("Este método debe ser implementado por la clase hija.")
-    def _process_cifin(self):
-        raise NotImplementedError("Este método debe ser implementado por la clase hija.")
+        pass # Se sobreescribe en las hijas
     
+    def _process_cifin(self):
+        pass # Se sobreescribe en las hijas
 
+
+# 2. CLASE ARPESOD (IMPLEMENTACIÓN ESPECÍFICA)
 class CentralesArpesodView(BaseCentralesView):
-    # --- CAMBIO: Se elimina 'menu_controller' del init ---
     def __init__(self, parent, datacredito_controller, cifin_controller):
         super().__init__(parent, datacredito_controller, cifin_controller, "ARPESOD")
 
     def _process_datacredito(self):
-        messagebox.showinfo("Proceso Datacredito", "Iniciando proceso para Datacredito ARPESOD...")
-    def _process_cifin(self):
-        if not self.cifin_plano_path.get() or not self.cifin_correcciones_path.get():
-            messagebox.showerror("Error", "Debe seleccionar ambos archivos para CIFIN.")
+        # 1. Validar
+        plano = self.dc_plano_path.get()
+        correcciones = self.dc_correcciones_path.get()
+        
+        if not plano or not correcciones:
+            messagebox.showwarning("Faltan Datos", "Selecciona ambos archivos para Datacrédito.")
             return
-        self.cifin_controller.set_empresa_actual(self.empresa_name)
-        self.cifin_controller.run_processing(self.cifin_plano_path.get(), self.cifin_correcciones_path.get())
 
+        # 2. Configurar Controlador
+        self.datacredito_controller.set_empresa_actual("arpesod")
+        
+        # 3. EJECUTAR (Esto es lo que faltaba antes)
+        # Pasamos 'self' para que el controlador pueda llamar a nuestro update_status
+        self.datacredito_controller.run_processing_datacredito(self, plano, correcciones)
+
+    def _process_cifin(self):
+        plano = self.cifin_plano_path.get()
+        correcciones = self.cifin_correcciones_path.get()
+        
+        if not plano or not correcciones:
+            messagebox.showwarning("Faltan Datos", "Selecciona ambos archivos para CIFIN.")
+            return
+
+        self.cifin_controller.set_empresa_actual("arpesod")
+        self.cifin_controller.run_processing(plano, correcciones) # Asumiendo que cifin tiene logica similar
+
+# 3. CLASE FINANSUEÑOS (IMPLEMENTACIÓN ESPECÍFICA)
 class CentralesFinansuenosView(BaseCentralesView):
-    # --- CAMBIO: Se elimina 'menu_controller' del init ---
     def __init__(self, parent, datacredito_controller, cifin_controller):
         super().__init__(parent, datacredito_controller, cifin_controller, "FINANSUEÑOS")
 
     def _process_datacredito(self):
-        if not self.dc_plano_path.get() or not self.dc_correcciones_path.get():
-            messagebox.showerror("Error", "Debe seleccionar ambos archivos para Datacredito.")
+        plano = self.dc_plano_path.get()
+        correcciones = self.dc_correcciones_path.get()
+        
+        if not plano or not correcciones:
+            messagebox.showwarning("Faltan Datos", "Selecciona ambos archivos para Datacrédito.")
             return
-        self.datacredito_controller.set_empresa_actual(self.empresa_name)
-        self.datacredito_controller.run_processing_datacredito(self, self.dc_plano_path.get(), self.dc_correcciones_path.get())
-    def _process_cifin(self):
-        if not self.cifin_plano_path.get() or not self.cifin_correcciones_path.get():
-            messagebox.showerror("Error", "Debe seleccionar ambos archivos para CIFIN.")
-            return
-        self.cifin_controller.set_empresa_actual(self.empresa_name)
-        self.cifin_controller.run_processing(self.cifin_plano_path.get(), self.cifin_correcciones_path.get())
 
+        self.datacredito_controller.set_empresa_actual("finansueños")
+        self.datacredito_controller.run_processing_datacredito(self, plano, correcciones)
+
+    def _process_cifin(self):
+        plano = self.cifin_plano_path.get()
+        correcciones = self.cifin_correcciones_path.get()
+        
+        if not plano or not correcciones:
+            messagebox.showwarning("Faltan Datos", "Selecciona ambos archivos para CIFIN.")
+            return
+
+        self.cifin_controller.set_empresa_actual("finansueños")
+        self.cifin_controller.run_processing(plano, correcciones)
+
+# 4. VISTA DE PESTAÑAS (CONTENEDOR PRINCIPAL)
 class CentralesTabView(ttk.Frame):
     """
-    --- CAMBIO ESTRUCTURAL ---
-    Esta vista ahora contiene un Notebook con las sub-pestañas 'ARPESOD' y 'FINANSUEÑOS',
-    eliminando la necesidad de un menú de botones y de cambiar vistas manualmente.
+    Vista principal que contiene las pestañas. Esta es la que instancia
+    el MainController.
     """
     def __init__(self, parent, datacredito_controller, cifin_controller, main_window_controller):
         super().__init__(parent)
-        self.configure(style='TFrame')
 
-        # --- Creamos el Notebook para las sub-pestañas ---
+        # Sistema de Pestañas
         notebook = ttk.Notebook(self)
-        notebook.pack(fill="both", expand=True, pady=10, padx=5)
+        notebook.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # --- Creamos el contenido de la primera pestaña ---
-        arpesod_frame = CentralesArpesodView(notebook, datacredito_controller, cifin_controller)
-        notebook.add(arpesod_frame, text="  ARPESOD  ")
+        # Instanciar las vistas hijas
+        self.tab_arpesod = CentralesArpesodView(notebook, datacredito_controller, cifin_controller)
+        self.tab_finansuenos = CentralesFinansuenosView(notebook, datacredito_controller, cifin_controller)
 
-        # --- Creamos el contenido de la segunda pestaña ---
-        finansuenos_frame = CentralesFinansuenosView(notebook, datacredito_controller, cifin_controller)
-        notebook.add(finansuenos_frame, text="  FINANSUEÑOS  ")
+        # Agregar al notebook
+        notebook.add(self.tab_arpesod, text="   ARPESOD   ")
+        notebook.add(self.tab_finansuenos, text="   FINANSUEÑOS   ")

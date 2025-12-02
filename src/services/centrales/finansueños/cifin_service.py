@@ -1,6 +1,6 @@
 import pandas as pd
 
-class DataProcessorService:
+class FinansuenosDataProcessorService:
     def __init__(self, df, ruta_correcciones, column_mapping):
         self.df = df
         self.ruta_correcciones = ruta_correcciones
@@ -20,9 +20,7 @@ class DataProcessorService:
     
     def _correct_data_from_excel(self):
         print("  - Corrigiendo desde Excel...")
-
         # --- Parte A: Corregir Cédulas ---
-        
         # Asegura que la columna de identificación en el DataFrame principal sea texto sin espacios.
         self.df['NUMERO DE IDENTIFICACION'] = self.df['NUMERO DE IDENTIFICACION'].astype(int)
         self.df[self.map['id_number']] = self.df[self.map['id_number']].astype(str).str.strip()
