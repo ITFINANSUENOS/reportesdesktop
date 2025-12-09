@@ -68,6 +68,22 @@ class NominaService:
             )
             print("✅ Tablas de COBRADORES extraídas correctamente.")
             
+            print("🆔 Leyendo hoja de Cédulas...")
+            sheet_cc = 'CC COBRADORES' # Asegúrate que este sea el nombre exacto en el Excel
+            
+            # Leemos el excel. Asumimos que los encabezados están en la primera fila (header=0)
+            df_cedulas = pd.read_excel(file_path, sheet_name=sheet_cc, header=0)
+            
+            # Limpiamos los nombres para asegurar el cruce (mayúsculas y sin espacios extra)
+            if 'NOMBRE' in df_cedulas.columns and 'CC' in df_cedulas.columns:
+                df_cedulas['NOMBRE'] = df_cedulas['NOMBRE'].astype(str).str.strip().str.upper()
+                # Nos quedamos solo con las columnas que nos interesan
+                excel_data['CEDULAS'] = df_cedulas[['NOMBRE', 'CC']]
+                print("✅ Tabla de CÉDULAS extraída correctamente.")
+            else:
+                print("⚠️ La hoja 'CC COBRADORES' no tiene las columnas 'NOMBRE' o 'CC'.")
+                excel_data['CEDULAS'] = pd.DataFrame(columns=['NOMBRE', 'CC'])
+            
             # --- INICIO DE LA MODIFICACIÓN: IMPRIMIR RESULTADOS EN CONSOLA ---
             print("\n" + "="*50)
             print("📊 DATOS DE NÓMINA CARGADOS CORRECTAMENTE 📊")

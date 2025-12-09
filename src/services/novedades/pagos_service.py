@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+
 class PagosService:
 
     def _buscar_comision(self, cumplimiento, franja_col, df_comisiones):
@@ -70,19 +71,8 @@ class PagosService:
         df_pivot_gestores.reset_index(inplace=True)
 
         # --- Paso 5: MODIFICADO - Crear la Estructura del DataFrame Final ---
-        print("🏗️ Creando estructura del reporte final...")
-        header = [
-            ('ZONA', ''), ('REGIONAL', ''), ('NOMBRE', ''),
-            ('1 A 30', 'META_$'), ('1 A 30', 'Recaudo_Meta'), ('1 A 30', 'Cumplimiento_%'), ('1 A 30', 'Comision'),
-            ('31 A 90', 'META_$'), ('31 A 90', 'Recaudo_Meta'), ('31 A 90', 'Cumplimiento_%'), ('31 A 90', 'Comision'),
-            ('91 A 180', 'META_$'), ('91 A 180', 'Recaudo_Meta'), ('91 A 180', 'Cumplimiento_%'), ('91 A 180', 'Comision'),
-            ('181 A 360', 'META_$'), ('181 A 360', 'Recaudo_Meta'), ('181 A 360', 'Cumplimiento_%'), ('181 A 360', 'Comision'),
-            ('TOTALES', 'Recaudo_Meta_TR'), ('TOTALES', 'META_TR$'), ('TOTALES', 'Cumplimiento_TR%'), ('TOTALES', 'Comision_TR'),
-            ('PAGO FINAL', 'BASICO'), ('PAGO FINAL', 'COMISIONES'), ('PAGO FINAL', 'TOTAL_PAGAR')
-        ]
-        franjas_map = {'1 A 30': '1 A 30', '31 A 90': '31 A 90', '91 A 180': '91 A 180', '181 A 360': '181 A 360'}
         
-        # --- (Pasos 6 a 9 se ejecutan como antes para tener las comisiones calculadas) ---
+        # Merge inicial
         df_zonas_final = pd.merge(df_pivot_zonas, df_totales_zonas, on=['Regional_Cobro', 'Zona', 'Cobrador'], how='left')
         df_gestores_final = pd.merge(df_pivot_gestores, df_totales_gestores, on=['Gestor'], how='left')
         df_gestores_final['Regional_Cobro'] = df_gestores_final['Gestor'].map(gestor_regional_map)
@@ -93,11 +83,49 @@ class PagosService:
         df_final['NOMBRE'] = df_final['NOMBRE_COBRADOR'].fillna(df_final['NOMBRE_GESTOR'])
         df_final['ZONA'] = df_final['ZONA'].fillna('GESTOR')
         df_final.drop(columns=['NOMBRE_COBRADOR', 'NOMBRE_GESTOR'], inplace=True)
+
+        # -------------------------------------------------------------
+        # --- NUEVO BLOQUE: CRUCE DE CÉDULAS --------------------------
+        # -------------------------------------------------------------
+        if datos_nomina and 'CEDULAS' in datos_nomina:
+            print("🆔 Agregando cédulas al reporte...")
+            df_cedulas = datos_nomina['CEDULAS']
+            
+            # Aseguramos limpieza para el match
+            df_final['NOMBRE'] = df_final['NOMBRE'].astype(str).str.strip().str.upper()
+            
+            # Hacemos el merge con la tabla de cédulas usando 'NOMBRE'
+            # Asumimos que df_cedulas tiene columnas ['NOMBRE', 'CC']
+            df_final = pd.merge(df_final, df_cedulas[['NOMBRE', 'CC']], on='NOMBRE', how='left')
+            
+            # Rellenamos vacíos por si algún nombre no cruza
+            df_final['CC'] = df_final['CC'].fillna('')
+        else:
+            df_final['CC'] = ''
+        # -------------------------------------------------------------
+
+        print("🏗️ Creando estructura del reporte final...")
+        # --- HEADER MODIFICADO: SE AGREGÓ ('CC', '') ---
+        header = [
+            ('ZONA', ''), ('REGIONAL', ''), ('NOMBRE', ''), ('CC', ''),
+            ('1 A 30', 'META_$'), ('1 A 30', 'Recaudo_Meta'), ('1 A 30', 'Cumplimiento_%'), ('1 A 30', 'Comision'),
+            ('31 A 90', 'META_$'), ('31 A 90', 'Recaudo_Meta'), ('31 A 90', 'Cumplimiento_%'), ('31 A 90', 'Comision'),
+            ('91 A 180', 'META_$'), ('91 A 180', 'Recaudo_Meta'), ('91 A 180', 'Cumplimiento_%'), ('91 A 180', 'Comision'),
+            ('181 A 360', 'META_$'), ('181 A 360', 'Recaudo_Meta'), ('181 A 360', 'Cumplimiento_%'), ('181 A 360', 'Comision'),
+            ('TOTALES', 'Recaudo_Meta_TR'), ('TOTALES', 'META_TR$'), ('TOTALES', 'Cumplimiento_TR%'), ('TOTALES', 'Comision_TR'),
+            ('PAGO FINAL', 'BASICO'), ('PAGO FINAL', 'COMISIONES'), ('PAGO FINAL', 'TOTAL_PAGAR')
+        ]
+        franjas_map = {'1 A 30': '1 A 30', '31 A 90': '31 A 90', '91 A 180': '91 A 180', '181 A 360': '181 A 360'}
         
         df_reporte = pd.DataFrame(columns=pd.MultiIndex.from_tuples(header))
-        columnas_texto_final = [('ZONA', ''), ('REGIONAL', ''), ('NOMBRE', '')]
+        
+        # --- COLUMNAS TEXTO MODIFICADO: SE AGREGÓ ('CC', '') ---
+        columnas_texto_final = [('ZONA', ''), ('REGIONAL', ''), ('NOMBRE', ''), ('CC', '')]
+        
         for col in columnas_texto_final:
-            df_reporte[col] = df_final[col[0]]
+            if col[0] in df_final.columns:
+                df_reporte[col] = df_final[col[0]]
+                
         for franja_reporte, franja_pivot in franjas_map.items():
             meta_col, recaudo_col = f'Meta_$_{franja_pivot}', f'Recaudo_Meta_{franja_pivot}'
             df_reporte[(franja_reporte, 'META_$')] = df_final.get(meta_col, 0)
@@ -110,7 +138,6 @@ class PagosService:
             meta = pd.to_numeric(df_reporte[(franja, 'META_$')], errors='coerce')
             recaudo = pd.to_numeric(df_reporte[(franja, 'Recaudo_Meta')], errors='coerce')
             porcentaje_decimal = np.where(meta != 0, recaudo / meta, 0)
-            # --- LÍNEA MODIFICADA 1 ---
             df_reporte[(franja, 'Cumplimiento_%')] = [f"{format(x * 100, '.2f')}%".replace('.', ',') for x in porcentaje_decimal]
         
         meta_tr = pd.to_numeric(df_reporte[('TOTALES', 'META_TR$')], errors='coerce')
@@ -124,7 +151,6 @@ class PagosService:
             tabla_com_cobradores = datos_nomina['COBRADORES']['Comisiones']
             mapa_franjas_comision = {'1 A 30': '1-30', '31 A 90': '31-90', '91 A 180': '91-180', '181 A 360': '181-360'}
             for franja_reporte, franja_comision in mapa_franjas_comision.items():
-                # --- LÍNEA MODIFICADA 2 ---
                 cumplimiento_numerico = df_reporte[(franja_reporte, 'Cumplimiento_%')].str.replace('%', '').str.replace(',', '.').astype(float) / 100
                 comisiones_calculadas = [self._buscar_comision(cumplimiento_numerico[idx], franja_comision, tabla_com_gestores if row[('ZONA', '')] == 'GESTOR' else tabla_com_cobradores) for idx, row in df_reporte.iterrows()]
                 df_reporte[(franja_reporte, 'Comision')] = comisiones_calculadas
@@ -166,7 +192,6 @@ class PagosService:
 
             # Regla para DARVIS IDROBO
             elif nombre_gestor == 'DARVIS IDROBO':
-                # --- LÍNEA MODIFICADA 3 ---
                 cumplimiento_31_90 = float(row[('31 A 90', 'Cumplimiento_%')].replace('%', '').replace(',', '.'))
                 basico_darbis = 2000000 if cumplimiento_31_90 > 95 else 1800000
                 df_reporte.loc[idx, ('PAGO FINAL', 'BASICO')] = basico_darbis
