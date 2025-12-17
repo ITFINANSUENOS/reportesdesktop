@@ -96,17 +96,19 @@ configuracion = {
                       "SALDO":"Saldo" }
     },
     "MATRIZ_CARTERA": {
-        "skiprows": 2, "header": None, 
-        "new_names": ['Zona', 
-                      'Cobrador', 
-                      'Telefono_Cobrador', 
-                      'Regional_Cobro', 
-                      'Gestor', 
-                      'Telefono_Gestor', 
-                      'call_center_1_30_dias', 'call_center_nombre_1_30', 'call_center_telefono_1_30', 
-                      'call_center_31_90_dias', 'call_center_nombre_31_90', 'call_center_telefono_31_90', 
-                      'call_center_91_360_dias', 'call_center_nombre_91_360', 'call_center_telefono_91_360'],
-        "merge_on": "Zona" 
+         "usecols":["CREDITO","ZONA","NOMBRE","COBRADOR","GESTOR","TELEFONO GESTOR",
+                    "REGIONAL","CALL CENTER ASIGNADO", "NOMBRE CC","TELEFONO"],
+        "rename_map":{ 
+                      "CREDITO":"Credito",
+                      "ZONA": "Zona",
+                      "NOMBRE":"Cobrador",
+                      "COBRADOR":"Telefono_Cobrador",
+                      "GESTOR":"Gestor",
+                      "TELEFONO GESTOR":"Telefono_Gestor",
+                      "REGIONAL":"Regional_Cobro",  
+                      "CALL CENTER ASIGNADO":"Call_Center_Apoyo", 
+                      "NOMBRE CC":"Nombre_Call_Center",
+                      "TELEFONO":"Telefono_Call_Center"}                           
     },
      "METAS_FRANJAS":{
         "usecols":["ZONA","1 A 30","31 A 90","91 A 180","181 A 360","T.R"],

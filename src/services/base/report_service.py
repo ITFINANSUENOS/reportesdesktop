@@ -110,9 +110,21 @@ class ReportService:
         if not r03_df.empty:
             reporte_final = pd.merge(reporte_final, r03_df.drop_duplicates('Credito'), on='Credito', how='left', suffixes=('', '_R03'))
         if not matriz_cartera_df.empty:
+            print("\n🔍 Uniendo Matriz de Cartera por Zona y Credito...")
             reporte_final['Zona'] = reporte_final['Zona'].astype(str).str.strip()
             matriz_cartera_df['Zona'] = matriz_cartera_df['Zona'].astype(str).str.strip()
-            reporte_final = pd.merge(reporte_final, matriz_cartera_df.drop_duplicates('Zona'), on='Zona', how='left')
+            matriz_cartera_df['Credito'] = (
+                matriz_cartera_df['Credito']
+                .astype(str)
+                .str.strip()
+                .str.replace(r'\.0$', '', regex=True)
+            )
+            reporte_final = pd.merge(
+                reporte_final, 
+                matriz_cartera_df.drop_duplicates(subset=['Zona', 'Credito']), 
+                on=['Zona', 'Credito'], 
+                how='left'
+            )
         if asesores_sheets:
             # Primero obtenemos todos los códigos de vendedor activos
             codigos_activos = []
