@@ -82,36 +82,28 @@ class CallCenterService:
                 print("⚠️ No se pudieron cargar datos de 'Llamadas_Call' o 'Flujos'. Abortando Reporte de Llamadas.")
                 return pd.DataFrame()
             
-            # --- Lógica de limpieza de Duracion_Llamada (tu código anterior) ---
+            # --- Lógica de limpieza de Duracion_Llamada ---
             print("🧹 Limpiando la columna 'Duracion_Llamada'...")
             if 'Duracion_Llamada' in df_llamadas_total.columns:
-                print("💾 Preservando formato original de 'Duracion_Llamada'...")
                 df_llamadas_total['Duracion_Original_Str'] = df_llamadas_total['Duracion_Llamada'].astype(str)
                 
                 extracted_seconds = df_llamadas_total['Duracion_Llamada'].astype(str).str.extract(r'^(\d+)')
                 numeric_seconds = pd.to_numeric(extracted_seconds[0], errors='coerce').fillna(0)
                 df_llamadas_total['Duracion_Llamada'] = numeric_seconds.astype(int)
                 
-                print("🔄 Aplicando lógica de negocio a 'Estado_Llamada' (>= 30s)...")
                 if 'Estado_Llamada' in df_llamadas_total.columns:
                     df_llamadas_total['Estado_Llamada'] = np.where(
                         (df_llamadas_total['Estado_Llamada'] == 'ANSWERED') & (df_llamadas_total['Duracion_Llamada'] < 30),
                         'FAILED',
                         df_llamadas_total['Estado_Llamada']
                     )
-                else:
-                    print("⚠️ Advertencia: No se encontró 'Estado_Llamada' para aplicar la lógica de < 30s.")
-            else:
-                 print("⚠️ Advertencia: No se encontró la columna 'Duracion_Llamada'.")
             
             # --- Lógica de unión para Reporte de Llamadas ---
             df_llamadas_total['Extension_Llamada'] = df_llamadas_total['Extension_Llamada'].astype(str)
             df_flujos_total['Extension_Llamada'] = df_flujos_total['Extension_Llamada'].astype(str)
             
-            # Preparamos flujos para este merge (solo por Extensión)
             df_flujos_para_llamadas = df_flujos_total.drop_duplicates(subset=['Extension_Llamada'])
 
-            print("🧩 Uniendo datos de llamadas y flujos por 'Extension_Llamada'...")
             df_reporte = pd.merge(
                 df_llamadas_total,
                 df_flujos_para_llamadas,
@@ -121,16 +113,12 @@ class CallCenterService:
             
             # Restaurar formato original de Duración
             if 'Duracion_Original_Str' in df_reporte.columns:
-                print("✨ Restaurando formato string original de 'Duracion_Llamada'...")
                 df_reporte['Duracion_Llamada'] = df_reporte['Duracion_Original_Str']
                 df_reporte.drop(columns=['Duracion_Original_Str'], inplace=True)
 
-            # Eliminamos Flujo_Truora si existe, ya que este reporte se une por Extension
             if 'Flujo_Truora' in df_reporte.columns:
-                print("🗑️ Eliminando la columna 'Flujo_Truora' del reporte final...")
                 df_reporte.drop(columns=['Flujo_Truora'], inplace=True)
             
-            print("✅ Reporte de Llamadas generado exitosamente.")
             return df_reporte
 
         except Exception as e:
@@ -148,7 +136,6 @@ class CallCenterService:
             return pd.DataFrame()
             
         try:
-            # Usamos el método auxiliar para cargar los datos
             _, df_flujos_total, df_mensajes_total = self._cargar_call_center_sheets(rutas_call_center, config)
 
             if df_mensajes_total.empty or df_flujos_total.empty:
@@ -156,31 +143,20 @@ class CallCenterService:
                 return pd.DataFrame()
 
             # --- Lógica de unión para Reporte de Mensajes ---
-            print("🧹 Preparando datos para el cruce por 'Flujo_Truora'...")
-            
-            # Preparar DF de Mensajes
             df_mensajes_total['Flujo_Truora'] = df_mensajes_total['Flujo_Truora'].astype(str)
 
-            # Preparar DF de Flujos:
-            # 1. Seleccionar solo columnas necesarias (evitar 'Extension_Llamada')
             columnas_flujo = ['Flujo_Truora', 'Call_Center', 'Nombre_Call']
             df_flujos_para_mensajes = df_flujos_total[columnas_flujo].copy()
             
-            # 2. Convertir llave a string
             df_flujos_para_mensajes['Flujo_Truora'] = df_flujos_para_mensajes['Flujo_Truora'].astype(str)
-            
-            # 3. Eliminar duplicados en base a la llave
             df_flujos_para_mensajes.drop_duplicates(subset=['Flujo_Truora'], inplace=True)
 
-            print("🧩 Uniendo datos de mensajes y flujos por 'Flujo_Truora'...")
             df_reporte = pd.merge(
                 df_mensajes_total,
                 df_flujos_para_mensajes,
                 on='Flujo_Truora',
                 how='left'
             )
-            
-            print("✅ Reporte de Mensajes generado exitosamente.")
             return df_reporte
 
         except Exception as e:
@@ -191,7 +167,6 @@ class CallCenterService:
         """
         Realiza una limpieza inicial de los datos necesarios para el reporte.
         """
-        # ... (Este método no cambia) ...
         print("🧹 Limpiando y preparando datos para el reporte de Call Centers...")
         df_copy = df.copy()
         columnas_numericas = ['Meta_General', 'Meta_$', 'Recaudo_Meta']
@@ -210,58 +185,92 @@ class CallCenterService:
                 df_copy[col] = ''          
         return df_copy
 
-
     def generar_reporte_call_center(self, df_analisis_cartera):
         """
         Genera un reporte consolidado del rendimiento de los Call Centers.
+        [MODIFICADO] Usa lógica unificada (Cascada) para sumar Zona + Apoyo.
         """
-        # ... (Este método no cambia) ...
-        print("🔄 Iniciando la generación del reporte de Call Centers...")
+        print("🔄 Iniciando la generación del reporte de Call Centers (Lógica Unificada)...")
         df = self._limpiar_y_preparar_datos(df_analisis_cartera)
-
-        print("📊 Procesando Call Centers CL1 - CL4...")
-        df_cl1_4 = df[df['Zona'].isin(['CL1', 'CL2', 'CL3', 'CL4']) & (df['Franja_Meta'] == 'AL DIA')]
         
-        agg_cl1_4 = df_cl1_4.groupby(['Zona', 'Cobrador']).agg(**{
-            'META_$': pd.NamedAgg(column='Meta_General', aggfunc='sum'),
-            'Recaudo_Meta': pd.NamedAgg(column='Recaudo_Meta', aggfunc='sum')
-        }).reset_index()
-        agg_cl1_4.rename(columns={'Zona': 'CALL_CENTER', 'Cobrador': 'NOMBRE'}, inplace=True)
+        # Definimos los Call Centers a analizar
+        all_call_centers = [f'CL{i}' for i in range(1, 10)]
 
-        print("📊 Procesando Call Centers CL5 - CL9...")
-        df_cl5_9 = df[df['Call_Center_Apoyo'].isin(['CL5', 'CL6', 'CL7', 'CL8', 'CL9'])]
-        agg_cl5_9 = df_cl5_9.groupby(['Call_Center_Apoyo', 'Nombre_Call_Center']).agg(**{
-            'META_$': pd.NamedAgg(column='Meta_$', aggfunc='sum'),
-            'Recaudo_Meta': pd.NamedAgg(column='Recaudo_Meta', aggfunc='sum')
-        }).reset_index()
-        agg_cl5_9.rename(columns={'Call_Center_Apoyo': 'CALL_CENTER', 'Nombre_Call_Center': 'NOMBRE'}, inplace=True)
+        # --- LÓGICA DE CASCADA (Waterflow) ---
+        # 1. Prioridad: Lo que está en Zona y está 'AL DIA'
+        mask_zona_al_dia = (
+            (df['Zona'].isin(all_call_centers)) & 
+            (df['Franja_Meta'] == 'AL DIA')
+        )
+        df_zona = df[mask_zona_al_dia].copy()
         
-        print("🧩 Combinando datos y realizando cálculos finales...")
-        df_reporte = pd.concat([agg_cl1_4, agg_cl5_9], ignore_index=True)
+        # 2. Resto: Lo que está en Apoyo y NO fue capturado en Zona
+        # Esto asegura que sumamos las 34 cuentas extras
+        mask_apoyo_general = df['Call_Center_Apoyo'].isin(all_call_centers)
+        mask_apoyo_final = mask_apoyo_general & (~mask_zona_al_dia)
+        
+        df_apoyo = df[mask_apoyo_final].copy()
 
-        if df_reporte.empty:
-            print("⚠️ No se encontraron datos para generar el reporte de Call Centers.")
+        print(f"📊 Registros Zona (Al Día): {len(df_zona)} | Registros Apoyo (Extra): {len(df_apoyo)}")
+
+        # --- NORMALIZACIÓN DE COLUMNAS PARA UNIR ---
+        # Estandarizamos nombres para poder sumar
+        df_zona_norm = df_zona.rename(columns={
+            'Zona': 'CALL_CENTER_ID',
+            'Cobrador': 'NOMBRE_AGENTE',
+            'Meta_General': 'META_UNIFICADA'
+        })[['CALL_CENTER_ID', 'NOMBRE_AGENTE', 'META_UNIFICADA', 'Recaudo_Meta']].copy()
+        
+        df_apoyo_norm = df_apoyo.rename(columns={
+            'Call_Center_Apoyo': 'CALL_CENTER_ID',
+            'Nombre_Call_Center': 'NOMBRE_AGENTE',
+            'Meta_$': 'META_UNIFICADA'
+        })[['CALL_CENTER_ID', 'NOMBRE_AGENTE', 'META_UNIFICADA', 'Recaudo_Meta']].copy()
+
+        # --- CONCATENACIÓN ---
+        df_total_unificado = pd.concat([df_zona_norm, df_apoyo_norm], ignore_index=True)
+
+        if df_total_unificado.empty:
+            print("⚠️ No se encontraron datos para el reporte unificado.")
             return pd.DataFrame(columns=[
                 'CALL_CENTER', 'NOMBRE', 'META_$', 'Recaudo_Meta', 'Faltante', 'Cumplimiento_%'
             ])
-        df_reporte['Faltante'] = df_reporte['META_$'] - df_reporte['Recaudo_Meta']
+
+        # --- AGRUPACIÓN FINAL ---
+        agg_total = df_total_unificado.groupby(['CALL_CENTER_ID', 'NOMBRE_AGENTE']).agg(
+            Meta_Total=('META_UNIFICADA', 'sum'),
+            Recaudo_Total=('Recaudo_Meta', 'sum')
+        ).reset_index()
+
+        # --- CÁLCULOS DE KPI ---
+        agg_total['Faltante'] = agg_total['Meta_Total'] - agg_total['Recaudo_Total']
+        
         cumplimiento_decimal = np.where(
-            df_reporte['META_$'] > 0,
-            df_reporte['Recaudo_Meta'] / df_reporte['META_$'],
+            agg_total['Meta_Total'] > 0,
+            agg_total['Recaudo_Total'] / agg_total['Meta_Total'],
             0
         )
-        df_reporte['Cumplimiento_%'] = [f"{format(x * 100, '.2f')}%".replace('.', ',') for x in cumplimiento_decimal]
-        
-        print("💰 Aplicando formato de moneda a las columnas financieras...")
+        agg_total['Cumplimiento_%'] = [f"{format(x * 100, '.2f')}%".replace('.', ',') for x in cumplimiento_decimal]
+
+        # --- FORMATO FINAL ---
+        agg_total.rename(columns={
+            'CALL_CENTER_ID': 'CALL_CENTER', 
+            'NOMBRE_AGENTE': 'NOMBRE',
+            'Meta_Total': 'META_$',
+            'Recaudo_Total': 'Recaudo_Meta'
+        }, inplace=True)
+
+        print("💰 Aplicando formato de moneda...")
         columnas_moneda = ['META_$', 'Recaudo_Meta', 'Faltante']
         for col in columnas_moneda:
-            if col in df_reporte.columns:
-                df_reporte[col] = df_reporte[col].apply(lambda x: f"$ {int(round(x, 0)):,}".replace(',', '.'))
-        print("✨ Ordenando el reporte final...")
+            if col in agg_total.columns:
+                agg_total[col] = agg_total[col].apply(lambda x: f"$ {int(round(x, 0)):,}".replace(',', '.'))
+
+        # Ordenar
         columnas_finales = [
             'CALL_CENTER', 'NOMBRE', 'META_$', 'Recaudo_Meta', 'Faltante', 'Cumplimiento_%'
         ]
-        df_reporte = df_reporte[columnas_finales]
-        df_reporte = df_reporte.sort_values(by='CALL_CENTER').reset_index(drop=True)
+        df_reporte = agg_total[columnas_finales].sort_values(by='CALL_CENTER').reset_index(drop=True)
+        
         print("✅ Reporte de Call Centers generado exitosamente.")
         return df_reporte

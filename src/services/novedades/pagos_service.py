@@ -71,8 +71,19 @@ class PagosService:
         df_pivot_gestores.reset_index(inplace=True)
 
         # --- Paso 5: MODIFICADO - Crear la Estructura del DataFrame Final ---
+        print("🏗️ Creando estructura del reporte final...")
+        header = [
+            ('ZONA', ''), ('REGIONAL', ''), ('NOMBRE', ''),
+            ('1 A 30', 'META_$'), ('1 A 30', 'Recaudo_Meta'), ('1 A 30', 'Cumplimiento_%'), ('1 A 30', 'Comision'),
+            ('31 A 90', 'META_$'), ('31 A 90', 'Recaudo_Meta'), ('31 A 90', 'Cumplimiento_%'), ('31 A 90', 'Comision'),
+            ('91 A 180', 'META_$'), ('91 A 180', 'Recaudo_Meta'), ('91 A 180', 'Cumplimiento_%'), ('91 A 180', 'Comision'),
+            ('181 A 360', 'META_$'), ('181 A 360', 'Recaudo_Meta'), ('181 A 360', 'Cumplimiento_%'), ('181 A 360', 'Comision'),
+            ('TOTALES', 'Recaudo_Meta_TR'), ('TOTALES', 'META_TR$'), ('TOTALES', 'Cumplimiento_TR%'), ('TOTALES', 'Comision_TR'),
+            ('PAGO FINAL', 'BASICO'), ('PAGO FINAL', 'COMISIONES'), ('PAGO FINAL', 'TOTAL_PAGAR')
+        ]
+        franjas_map = {'1 A 30': '1 A 30', '31 A 90': '31 A 90', '91 A 180': '91 A 180', '181 A 360': '181 A 360'}
         
-        # Merge inicial
+        # --- (Pasos 6 a 9 se ejecutan como antes para tener las comisiones calculadas) ---
         df_zonas_final = pd.merge(df_pivot_zonas, df_totales_zonas, on=['Regional_Cobro', 'Zona', 'Cobrador'], how='left')
         df_gestores_final = pd.merge(df_pivot_gestores, df_totales_gestores, on=['Gestor'], how='left')
         df_gestores_final['Regional_Cobro'] = df_gestores_final['Gestor'].map(gestor_regional_map)
@@ -83,49 +94,11 @@ class PagosService:
         df_final['NOMBRE'] = df_final['NOMBRE_COBRADOR'].fillna(df_final['NOMBRE_GESTOR'])
         df_final['ZONA'] = df_final['ZONA'].fillna('GESTOR')
         df_final.drop(columns=['NOMBRE_COBRADOR', 'NOMBRE_GESTOR'], inplace=True)
-
-        # -------------------------------------------------------------
-        # --- NUEVO BLOQUE: CRUCE DE CÉDULAS --------------------------
-        # -------------------------------------------------------------
-        if datos_nomina and 'CEDULAS' in datos_nomina:
-            print("🆔 Agregando cédulas al reporte...")
-            df_cedulas = datos_nomina['CEDULAS']
-            
-            # Aseguramos limpieza para el match
-            df_final['NOMBRE'] = df_final['NOMBRE'].astype(str).str.strip().str.upper()
-            
-            # Hacemos el merge con la tabla de cédulas usando 'NOMBRE'
-            # Asumimos que df_cedulas tiene columnas ['NOMBRE', 'CC']
-            df_final = pd.merge(df_final, df_cedulas[['NOMBRE', 'CC']], on='NOMBRE', how='left')
-            
-            # Rellenamos vacíos por si algún nombre no cruza
-            df_final['CC'] = df_final['CC'].fillna('')
-        else:
-            df_final['CC'] = ''
-        # -------------------------------------------------------------
-
-        print("🏗️ Creando estructura del reporte final...")
-        # --- HEADER MODIFICADO: SE AGREGÓ ('CC', '') ---
-        header = [
-            ('ZONA', ''), ('REGIONAL', ''), ('NOMBRE', ''), ('CC', ''),
-            ('1 A 30', 'META_$'), ('1 A 30', 'Recaudo_Meta'), ('1 A 30', 'Cumplimiento_%'), ('1 A 30', 'Comision'),
-            ('31 A 90', 'META_$'), ('31 A 90', 'Recaudo_Meta'), ('31 A 90', 'Cumplimiento_%'), ('31 A 90', 'Comision'),
-            ('91 A 180', 'META_$'), ('91 A 180', 'Recaudo_Meta'), ('91 A 180', 'Cumplimiento_%'), ('91 A 180', 'Comision'),
-            ('181 A 360', 'META_$'), ('181 A 360', 'Recaudo_Meta'), ('181 A 360', 'Cumplimiento_%'), ('181 A 360', 'Comision'),
-            ('TOTALES', 'Recaudo_Meta_TR'), ('TOTALES', 'META_TR$'), ('TOTALES', 'Cumplimiento_TR%'), ('TOTALES', 'Comision_TR'),
-            ('PAGO FINAL', 'BASICO'), ('PAGO FINAL', 'COMISIONES'), ('PAGO FINAL', 'TOTAL_PAGAR')
-        ]
-        franjas_map = {'1 A 30': '1 A 30', '31 A 90': '31 A 90', '91 A 180': '91 A 180', '181 A 360': '181 A 360'}
         
         df_reporte = pd.DataFrame(columns=pd.MultiIndex.from_tuples(header))
-        
-        # --- COLUMNAS TEXTO MODIFICADO: SE AGREGÓ ('CC', '') ---
-        columnas_texto_final = [('ZONA', ''), ('REGIONAL', ''), ('NOMBRE', ''), ('CC', '')]
-        
+        columnas_texto_final = [('ZONA', ''), ('REGIONAL', ''), ('NOMBRE', '')]
         for col in columnas_texto_final:
-            if col[0] in df_final.columns:
-                df_reporte[col] = df_final[col[0]]
-                
+            df_reporte[col] = df_final[col[0]]
         for franja_reporte, franja_pivot in franjas_map.items():
             meta_col, recaudo_col = f'Meta_$_{franja_pivot}', f'Recaudo_Meta_{franja_pivot}'
             df_reporte[(franja_reporte, 'META_$')] = df_final.get(meta_col, 0)
@@ -183,12 +156,26 @@ class PagosService:
             
             # Regla para JENNY ORDOÑEZ y LEONARDO CEBALLOS
             if nombre_gestor in ['JENNY ORDOÑEZ', 'LEONARDO CEBALLOS']:
-                basico_especial = 1600000 if nombre_gestor == 'JENNY ORDOÑEZ' else 2200000
-                total_temp = basico_primario + row[('PAGO FINAL', 'COMISIONES')]
                 
-                nueva_comision = total_temp - basico_especial
+                # A. Definimos el básico que ellos tienen GARANTIZADO
+                basico_garantizado = 1600000 if nombre_gestor == 'JENNY ORDOÑEZ' else 2200000
+                
+                # B. Definimos la BASE de cálculo para sumar comisiones
+                # Si es Leonardo, usamos 1.600.000. Si no (Jenny), usamos el estándar 1.423.500
+                if nombre_gestor == 'LEONARDO CEBALLOS':
+                    base_calculo = 1600000
+                else:
+                    base_calculo = basico_primario # 1423500
+
+                # C. Hacemos la suma temporal
+                total_temp = base_calculo + row[('PAGO FINAL', 'COMISIONES')]
+                
+                # D. Calculamos si hay excedente sobre su garantizado
+                nueva_comision = total_temp - basico_garantizado
+                
+                # E. Aplicamos los valores
                 df_reporte.loc[idx, ('PAGO FINAL', 'COMISIONES')] = max(0, nueva_comision)
-                df_reporte.loc[idx, ('PAGO FINAL', 'BASICO')] = basico_especial
+                df_reporte.loc[idx, ('PAGO FINAL', 'BASICO')] = basico_garantizado
 
             # Regla para DARVIS IDROBO
             elif nombre_gestor == 'DARVIS IDROBO':
@@ -223,9 +210,7 @@ class PagosService:
 
         for col in columnas_moneda:
             if col in df_reporte.columns:
-                # Se asegura que la columna sea numérica antes de darle formato
                 df_reporte[col] = pd.to_numeric(df_reporte[col], errors='coerce').fillna(0)
-                # Aplica el formato de moneda con '$' y separador de miles con '.'
                 df_reporte[col] = df_reporte[col].apply(lambda x: f"$ {int(round(x, 0)):,}".replace(',', '.'))
         
         print("✅ Reporte de pagos con cálculo final generado.")
