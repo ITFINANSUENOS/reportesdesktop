@@ -1,5 +1,3 @@
-# --- Pega esto en .dockerignore ---
-
 # Python
 __pycache__/
 *.pyc
