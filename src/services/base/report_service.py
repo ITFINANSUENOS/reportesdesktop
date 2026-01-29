@@ -40,6 +40,7 @@ class ReportService:
         r91_df = self.data_loader.create_credit_key(self.data_loader.safe_concat(dataframes_por_tipo.get("R91", [])))
         analisis_df = self.data_loader.create_credit_key(self.data_loader.safe_concat(dataframes_por_tipo.get("ANALISIS", [])))
         vencimientos_df = self.data_loader.create_credit_key(self.data_loader.safe_concat(dataframes_por_tipo.get("VENCIMIENTOS", [])))
+        
         if not vencimientos_df.empty:
             print("\n📞 Procesando lógica de teléfonos para VENCIMIENTOS...")
             vencimientos_df = self.cleaning_service.unificar_telefonos_codeudores(
@@ -50,11 +51,13 @@ class ReportService:
                 valor_defecto='',
                 solo_10_digitos=True
             )
+        
         crtmp_df = self.data_loader.create_credit_key(self.data_loader.safe_concat(dataframes_por_tipo.get("CRTMPCONSULTA1", [])))
         fnz003_df = self.data_loader.create_credit_key(self.data_loader.safe_concat(dataframes_por_tipo.get("FNZ003", [])))
         sc04_df = self.data_loader.safe_concat(dataframes_por_tipo.get("SC04", []))
         fnz001_df = self.data_loader.create_credit_key(self.data_loader.safe_concat(dataframes_por_tipo.get("FNZ001", [])))
         r03_df = self.data_loader.create_credit_key(self.data_loader.safe_concat(dataframes_por_tipo.get("R03", [])))
+        
         if not r03_df.empty:
             print("\n📞 Procesando lógica especial de teléfonos para R03...")
             r03_df = self.cleaning_service.unificar_telefonos_codeudores(
@@ -69,9 +72,10 @@ class ReportService:
                 col_secundaria='Movil_Codeudor2',   
                 col_destino='Telefono_Codeudor2'
             )
+            
         matriz_cartera_df = self.data_loader.safe_concat(dataframes_por_tipo.get("MATRIZ_CARTERA", []))
         metas_franjas_df = self.data_loader.safe_concat(dataframes_por_tipo.get("METAS_FRANJAS", []))
-        asesores_sheets = dataframes_por_tipo.get("ASESORES", [])
+        asesores_sheets_data = dataframes_por_tipo.get("ASESORES", [])
 
         # ✨ Consolidar créditos duplicados (mismo crédito, mismo cliente)
         if not r91_df.empty:
@@ -95,9 +99,12 @@ class ReportService:
             # Aplicar el groupby y la agregación
             r91_df = r91_df.groupby(columnas_agrupacion, as_index=False).agg(agg_dict)
             print(f"✅ R91 consolidado. Total de registros únicos: {len(r91_df)}")
+            
         if r91_df.empty: return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        
         reporte_final = r91_df.copy()
         print(f"📄 Reporte base creado con {len(reporte_final)} registros de R91 (sin eliminar duplicados).")
+        
         # 3. Procesar vencimientos
         processed_vencimientos, negativos_vencimientos = self.credit_details.process_vencimientos_data(vencimientos_df)
         
@@ -109,6 +116,7 @@ class ReportService:
              reporte_final = pd.merge(reporte_final, analisis_df.drop_duplicates('Credito'), on='Credito', how='left', suffixes=('', '_Analisis'))
         if not r03_df.empty:
             reporte_final = pd.merge(reporte_final, r03_df.drop_duplicates('Credito'), on='Credito', how='left', suffixes=('', '_R03'))
+            
         if not matriz_cartera_df.empty:
             print("\n🔍 Uniendo Matriz de Cartera por Zona y Credito...")
             reporte_final['Zona'] = reporte_final['Zona'].astype(str).str.strip()
@@ -125,45 +133,113 @@ class ReportService:
                 on=['Zona', 'Credito'], 
                 how='left'
             )
-        if asesores_sheets:
-            # Primero obtenemos todos los códigos de vendedor activos
-            codigos_activos = []
-            for item in asesores_sheets:
-                if 'Codigo_Vendedor' in item["data"].columns:
-                    # Convertimos a string, eliminamos espacios y decimales (.0)
-                    codigos = item["data"]['Codigo_Vendedor'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
-                    codigos_activos.extend(codigos.dropna().unique())
-            # Convertimos a set para eliminar duplicados
-            codigos_activos = set(codigos_activos)
-            print(f"🔍 Total de vendedores activos encontrados: {len(codigos_activos)}")
-            # 2. Preparamos la columna Codigo_Vendedor en el reporte para comparar
-            reporte_final['Codigo_Vendedor_clean'] = (
-                reporte_final['Codigo_Vendedor']
-                .astype(str)
-                .str.strip()
-                .str.replace(r'\.0$', '', regex=True)
-            )
-            # 3. Creamos la columna Vendedor_Activo
-            reporte_final['Vendedor_Activo'] = np.where(
-                reporte_final['Codigo_Vendedor_clean'].isin(codigos_activos),
-                'ACTIVO',
-                'INACTIVO'
-            )
-            # 4. Eliminamos la columna temporal
-            reporte_final.drop('Codigo_Vendedor_clean', axis=1, inplace=True)
-    
-            for item in asesores_sheets:
-                info_df = item["data"]
-                merge_key = item["config"]["merge_on"]
-                if not info_df.empty and merge_key in reporte_final.columns:
-                    # Convertir a string y eliminar decimales para la columna Codigo_Vendedor
-                    info_df[merge_key] = pd.to_numeric(info_df[merge_key], errors='coerce').fillna(0).astype('int64').astype(str)
-                    reporte_final[merge_key] = pd.to_numeric(reporte_final[merge_key], errors='coerce').fillna(0).astype('int64').astype(str)
-                    # Asegurar el mismo formato en el reporte_final
-                    reporte_final[merge_key] = reporte_final[merge_key].astype(str).str.replace(r'\.0$', '', regex=True)
-                    reporte_final[merge_key] = reporte_final[merge_key].str.strip()
-                    reporte_final = pd.merge(reporte_final, info_df.drop_duplicates(subset=merge_key), 
-                                        on=merge_key, how='left')
+
+        # --- LÓGICA DE ASESORES ---
+        if asesores_sheets_data:
+            print("\n🔍 Procesando archivo de Asesores (Multi-hoja)...")
+            
+            for item in asesores_sheets_data:
+                config_item = item.get('config', {})
+                
+                nombre_hoja = config_item.get('sheet_name', 'DESCONOCIDO')
+                col_merge_config = config_item.get('merge_on')
+                df_hoja = item.get('data')
+                
+                if df_hoja is None or df_hoja.empty:
+                    continue
+
+                if not col_merge_config:
+                    print(f"⚠️ Saltando {nombre_hoja}: No tiene configuración 'merge_on'.")
+                    continue
+
+                # CASO 1: HOJA PRINCIPAL DE ASESORES
+                if nombre_hoja == "ASESORES":
+                    print(f"   ⚡ Aplicando lógica de Vendedor Activo a: {nombre_hoja}")
+                    
+                    # 1. Limpiar llave del Excel (Int sin decimales)
+                    # Convertimos a numérico, los errores a NaN, llenamos con 0 y pasamos a int
+                    df_hoja[col_merge_config] = (
+                        pd.to_numeric(df_hoja[col_merge_config], errors='coerce')
+                        .fillna(0).astype(int)
+                    )
+
+                    # 2. Calcular Vendedor Activo
+                    codigos_activos = set(df_hoja[col_merge_config].unique())
+                    print(f"      -> {len(codigos_activos)} vendedores activos detectados.")
+
+                    # 3. Preparar llave en el Reporte (Int sin decimales) para cruzar
+                    col_temp_reporte = f"{col_merge_config}_Clean_Int"
+                    reporte_final[col_temp_reporte] = (
+                        pd.to_numeric(reporte_final[col_merge_config], errors='coerce')
+                        .fillna(0).astype(int)
+                    )
+
+                    # 4. Asignar estado ACTIVO/INACTIVO
+                    reporte_final['Vendedor_Activo'] = np.where(
+                        reporte_final[col_temp_reporte].isin(codigos_activos),
+                        'ACTIVO', 'INACTIVO'
+                    )
+
+                    # 5. Merge
+                    df_hoja = df_hoja.drop_duplicates(subset=[col_merge_config])
+                    reporte_final = pd.merge(
+                        reporte_final,
+                        df_hoja,
+                        left_on=col_temp_reporte,
+                        right_on=col_merge_config,
+                        how='left',
+                        suffixes=('', '_Maestro')
+                    )
+                    
+                    # Limpieza
+                    reporte_final.drop(col_temp_reporte, axis=1, inplace=True)
+                    if f'{col_merge_config}_Maestro' in reporte_final.columns:
+                        reporte_final.drop(f'{col_merge_config}_Maestro', axis=1, inplace=True)
+
+                # CASO 2: OTRAS HOJAS (Centro Costos, etc.)
+                else:
+                    print(f"   🔗 Cruzando hoja auxiliar: {nombre_hoja}")
+                    
+                    # Validamos que la columna llave exista en el reporte principal
+                    if col_merge_config in reporte_final.columns:
+                        
+                        # Estandarizamos ambas llaves a INT para asegurar que crucen
+                        # (Si R91 tiene centro costo 10 y Excel 10.0, esto lo arregla)
+                        
+                        # Limpieza Excel
+                        df_hoja[col_merge_config] = (
+                            pd.to_numeric(df_hoja[col_merge_config], errors='coerce')
+                            .fillna(0).astype(int)
+                        )
+                        
+                        # Limpieza Reporte (Temporal)
+                        col_temp_reporte = f"{col_merge_config}_Temp_Merge"
+                        reporte_final[col_temp_reporte] = (
+                            pd.to_numeric(reporte_final[col_merge_config], errors='coerce')
+                            .fillna(0).astype(int)
+                        )
+
+                        # Merge
+                        df_hoja = df_hoja.drop_duplicates(subset=[col_merge_config])
+                        reporte_final = pd.merge(
+                            reporte_final,
+                            df_hoja,
+                            left_on=col_temp_reporte,
+                            right_on=col_merge_config,
+                            how='left',
+                            suffixes=('', '_Aux')
+                        )
+                        
+                        # Limpieza
+                        reporte_final.drop(col_temp_reporte, axis=1, inplace=True)
+                        if f'{col_merge_config}_Aux' in reporte_final.columns:
+                            reporte_final.drop(f'{col_merge_config}_Aux', axis=1, inplace=True)
+                    else:
+                        print(f"      ⚠️ No se pudo cruzar {nombre_hoja}: Falta la columna {col_merge_config} en los datos base.")
+        else:
+             print("⚠️ Advertencia: No se cargó información de ASESORES.")
+             reporte_final['Vendedor_Activo'] = 'SIN INFO'
+            
         # 5. Aplicar transformaciones
         print("\n🚀 Iniciando transformaciones finales...")
         reporte_final['Empresa'] = np.where(reporte_final['Tipo_Credito'] == 'DF', 'FINANSUEÑOS', 'ARPESOD')
@@ -200,4 +276,5 @@ class ReportService:
             # Nos aseguramos que todas las columnas existan antes de seleccionarlas
             columnas_existentes = [col for col in columnas_finales_negativos if col in reporte_negativos_final.columns]
             reporte_negativos_final = reporte_negativos_final[columnas_existentes].drop_duplicates()
+            
         return reporte_final, reporte_negativos_final, df_a_corregir

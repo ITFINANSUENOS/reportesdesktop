@@ -110,7 +110,7 @@ configuracion = {
                       "NOMBRE CC":"Nombre_Call_Center",
                       "TELEFONO":"Telefono_Call_Center"}                           
     },
-     "METAS_FRANJAS":{
+    "METAS_FRANJAS":{
         "usecols":["ZONA","1 A 30","31 A 90","91 A 180","181 A 360","T.R"],
         "rename_map":{ "ZONA":"Zona", 
                       "1 A 30":"Meta_1_A_30", 
@@ -119,27 +119,40 @@ configuracion = {
                       "181 A 360":"Meta_181_A_360",
                       "T.R":"Total_Recaudo" }
     },
+     
     "ASESORES": {
-        "sheets": [{ 
-              "sheet_name": "ASESORES", 
-              "usecols":["CODIGO_VENDEDOR","JEFE VENTAS", "MOVIL ASESOR", "LIDER ZONA", "MOVIL LIDER"], 
-              "rename_map": { 
-                              "CODIGO_VENDEDOR":"Codigo_Vendedor",
-                              "MOVIL ASESOR": "Movil_Vendedor", 
-                              "LIDER ZONA": "Lider_Zona", 
-                              "MOVIL LIDER": "Movil_Lider",
-                              "JEFE VENTAS":"Jefe_ventas" }, 
-              "merge_on": "Codigo_Vendedor"
-              },
-            { 
-              "sheet_name": "Centro Costos",
-              "usecols": ["CENTRO DE COSTOS", "REGIONAL"], 
-              "rename_map": { "CENTRO DE COSTOS": "Codigo_Centro_Costos",
-                              "REGIONAL": "Regional_Venta" }, 
-              "merge_on": "Codigo_Centro_Costos" 
-              }
+        "sheets": [
+            {
+                "sheet_name": "ASESORES",                                
+                "usecols": [
+                    "LIDER ZONA", "JEFE VENTAS",  "TIPO_ASESOR", "CC ASESOR",
+                    "CODIGO_ASESOR", "SEDE", "ZONA"
+                    ],
+                "rename_map": { 
+                    "CODIGO_ASESOR": "Codigo_Vendedor",
+                    "LIDER ZONA": "Lider_Zona",
+                    "JEFE VENTAS": "Jefe_ventas",
+                    "SEDE": "Sede_Vendedor",
+                    "ZONA": "Zona_Venta",  
+                    "CC ASESOR": "Cedula_Vendedor",
+                    "TIPO_ASESOR": "Tipo_Asesor",
+                },
+                "merge_on": "Codigo_Vendedor"
+            },
+            {   
+                "sheet_name": "Centro Costos",
+                "usecols": [
+                    "CENTRO DE COSTOS", "REGIONAL"
+                    ], 
+                "rename_map": { 
+                    "CENTRO DE COSTOS": "Codigo_Centro_Costos",
+                    "REGIONAL": "Regional_Venta"
+                },
+                "merge_on": "Codigo_Centro_Costos"
+            }
         ]
-    },
+    }, 
+     
      "FNZ001":{
         "usecols":["DSM_TP","VLR_FNZ","VLR_CUOTA", "DSM_NUM","CUOTAS"],
         "rename_map":{ 
@@ -182,11 +195,13 @@ ORDEN_COLUMNAS_FINAL = [
     'Telefono_Gestor',
     'Jefe_ventas',
     'Codigo_Vendedor',
+    'Cedula_Vendedor',
     'Nombre_Vendedor',
-    'Movil_Vendedor',
     'Vendedor_Activo',
+    'Sede_Vendedor',
+    'Zona_Venta',
+    'Tipo_Asesor',
     'Lider_Zona',
-    'Movil_Lider',
     'Codigo_Centro_Costos',
     'Regional_Venta',
     'Codeudor1',
