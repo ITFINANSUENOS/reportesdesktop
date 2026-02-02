@@ -5,15 +5,18 @@ class CategorizationService:
     """
     Servicio simplificado. Ahora los Call Centers vienen asignados directamente
     por la Zona desde el archivo de configuración.
-    Aquí solo calculamos las franjas de mora y limpiamos gestores.
+    Aquí solo calculamos las franjas de mora, limpiamos gestores y rangos de pago.
     """
     def map_call_center_data(self, reporte_df):
         print("📞 Estandarizando datos de Gestor y calculando Franjas...")
 
-        # 1. Limpieza básica de Gestor (Igual que antes)
+        # 1. Limpieza básica de Gestor
         if 'Gestor' in reporte_df.columns:
-            reporte_df.loc[reporte_df['Gestor'] == 'SIN GESTOR', 'Gestor'] = 'CALL CENTER'
-            reporte_df['Gestor'].fillna('OTRAS ZONAS', inplace=True)
+            mask_sin_gestor = reporte_df['Gestor'] == 'SIN GESTOR'
+            reporte_df.loc[mask_sin_gestor, 'Gestor'] = 'CALL CENTER'
+            
+            # CORRECCIÓN 1: Evitamos el inplace=True para prevenir ChainedAssignmentError
+            reporte_df['Gestor'] = reporte_df['Gestor'].fillna('OTRAS ZONAS')
 
         # 2. Validación de Días de Atraso
         if 'Dias_Atraso' not in reporte_df.columns:
@@ -22,22 +25,30 @@ class CategorizationService:
             
         reporte_df['Dias_Atraso'] = pd.to_numeric(reporte_df['Dias_Atraso'], errors='coerce').fillna(0)
 
-        # 3. Calcular Franja Meta (Necesario para tu reporte final)
+        # 3. Calcular Franja Meta
         condiciones_mora = [
-            reporte_df['Dias_Atraso'] == 0, reporte_df['Dias_Atraso'].between(1, 30),
-            reporte_df['Dias_Atraso'].between(31, 90), reporte_df['Dias_Atraso'].between(91, 180),
-            reporte_df['Dias_Atraso'].between(181, 360), reporte_df['Dias_Atraso'] > 360
+            reporte_df['Dias_Atraso'] == 0, 
+            reporte_df['Dias_Atraso'].between(1, 30),
+            reporte_df['Dias_Atraso'].between(31, 90), 
+            reporte_df['Dias_Atraso'].between(91, 180),
+            reporte_df['Dias_Atraso'].between(181, 360), 
+            reporte_df['Dias_Atraso'] > 360
         ]
         valores_mora = ['AL DIA', '1 A 30', '31 A 90', '91 A 180','181 A 360','MAS DE 360']
         reporte_df['Franja_Meta'] = np.select(condiciones_mora, valores_mora, default='SIN INFO')
         
-        # 4. Calcular Franja Cartera (Necesario para tu reporte final)
+        # 4. Calcular Franja Cartera
         condiciones_cartera = [
-            reporte_df['Dias_Atraso'] == 0, reporte_df['Dias_Atraso'].between(1, 30),
-            reporte_df['Dias_Atraso'].between(31, 60), reporte_df['Dias_Atraso'].between(61, 90),
-            reporte_df['Dias_Atraso'].between(91, 120), reporte_df['Dias_Atraso'].between(121, 150),
-            reporte_df['Dias_Atraso'].between(151, 180), reporte_df['Dias_Atraso'].between(181, 210),
-            reporte_df['Dias_Atraso'].between(211, 270), reporte_df['Dias_Atraso'].between(271, 360),
+            reporte_df['Dias_Atraso'] == 0, 
+            reporte_df['Dias_Atraso'].between(1, 30),
+            reporte_df['Dias_Atraso'].between(31, 60), 
+            reporte_df['Dias_Atraso'].between(61, 90),
+            reporte_df['Dias_Atraso'].between(91, 120), 
+            reporte_df['Dias_Atraso'].between(121, 150),
+            reporte_df['Dias_Atraso'].between(151, 180), 
+            reporte_df['Dias_Atraso'].between(181, 210),
+            reporte_df['Dias_Atraso'].between(211, 270), 
+            reporte_df['Dias_Atraso'].between(271, 360),
             reporte_df['Dias_Atraso'] > 360
         ]
         valores_cartera = [
@@ -46,49 +57,52 @@ class CategorizationService:
         ]
         reporte_df['Franja_Cartera'] = np.select(condiciones_cartera, valores_cartera, default='SIN INFO')
         
-        # NOTA: Ya NO hacemos el mapeo complejo de Call Center aquí.
-        # Como hiciste el rename_map en la configuración, las columnas:
-        # 'Call_Center_Apoyo', 'Nombre_Call_Center' y 'Telefono_Call_Center'
-        # YA EXISTEN en el reporte_df gracias al merge en ReportService.
+        # CORRECCIÓN 3: Llamamos a la función de rangos aquí mismo para que se ejecute
+        reporte_df = self.calculate_last_payment_range(reporte_df)
 
-        print("✅ Cálculo de franjas completado. (Asignación de CC viene directa por Zona)")
+        print("✅ Cálculo de franjas y categorización completado.")
         return reporte_df
     
     def calculate_last_payment_range(self, reporte_df):
         """
-        Calcula el rango de tiempo desde el último pago inicial hasta una fecha de referencia.
-        Crea la columna 'Rango_Ultimo_pago_Inicial'.
+        Calcula el rango de tiempo desde el último pago inicial.
         """
-        print("📅 Calculando el rango de la fecha de último pago inicial...")
-
-        # Verificamos que la columna necesaria exista
-        if 'Fecha_Ultimo_pago_Inicial' not in reporte_df.columns:
-            print("   - ⚠️ Columna 'Fecha_Ultimo_pago_Inicial' no encontrada. Se omite el cálculo del rango.")
-            return reporte_df
+        # CORRECCIÓN 2: Nombre exacto de la columna según base_model.py (Mayúsculas importan)
+        col_fecha = 'Fecha_Ultimo_Pago_Inicial'  
         
-        # 1. Aseguramos que la columna sea del tipo datetime
-        reporte_df['Fecha_Ultimo_pago_Inicial'] = pd.to_datetime(reporte_df['Fecha_Ultimo_pago_Inicial'], errors='coerce')
+        # Verificamos que la columna exista (intentando con ambas grafías por seguridad)
+        if col_fecha not in reporte_df.columns:
+            # Intento de fallback por si acaso
+            if 'Fecha_Ultimo_pago_Inicial' in reporte_df.columns:
+                col_fecha = 'Fecha_Ultimo_pago_Inicial'
+            else:
+                # Si no está, retornamos sin hacer nada (silencioso para no ensuciar log si no es crítico)
+                return reporte_df
 
-        # 2. Definimos la fecha de referencia (día 5 del mes actual)
+        print("📅 Calculando el rango de la fecha de último pago inicial...")
+        
+        # 1. Aseguramos datetime (usando .copy() para evitar warnings si es una vista)
+        fechas = pd.to_datetime(reporte_df[col_fecha], errors='coerce')
+
+        # 2. Definimos referencia (día 5 del mes actual)
         hoy = pd.Timestamp.now()
         fecha_referencia = hoy.replace(day=5)
 
-        # 3. Calculamos las fechas límite
+        # 3. Fechas límite
         fecha_6_meses = fecha_referencia - pd.DateOffset(months=6)
         fecha_12_meses = fecha_referencia - pd.DateOffset(months=12)
         fecha_24_meses = fecha_referencia - pd.DateOffset(months=24)
         fecha_48_meses = fecha_referencia - pd.DateOffset(months=48)
 
-        # 4. Definimos las condiciones de clasificación
+        # 4. Condiciones
         condiciones_pago = [
-            reporte_df['Fecha_Ultimo_pago_Inicial'] > fecha_6_meses,
-            reporte_df['Fecha_Ultimo_pago_Inicial'].between(fecha_12_meses, fecha_6_meses, inclusive='right'),
-            reporte_df['Fecha_Ultimo_pago_Inicial'].between(fecha_24_meses, fecha_12_meses, inclusive='right'),
-            reporte_df['Fecha_Ultimo_pago_Inicial'].between(fecha_48_meses, fecha_24_meses, inclusive='right'),
-            reporte_df['Fecha_Ultimo_pago_Inicial'] <= fecha_48_meses
+            fechas > fecha_6_meses,
+            fechas.between(fecha_12_meses, fecha_6_meses, inclusive='right'),
+            fechas.between(fecha_24_meses, fecha_12_meses, inclusive='right'),
+            fechas.between(fecha_48_meses, fecha_24_meses, inclusive='right'),
+            (fechas <= fecha_48_meses) & (fechas.notna()) # Asegurar que no tome NaT
         ]
         
-        # 5. Definimos los valores para cada rango
         valores_pago = [
             '6 MESES',
             '6 A 12 MESES',
@@ -97,12 +111,11 @@ class CategorizationService:
             'MAS 4 AÑOS'
         ]
 
-        # 6. Creamos la columna usando np.select
+        # 5. Asignación
         reporte_df['Rango_Ultimo_pago_Inicial'] = np.select(
             condiciones_pago, 
             valores_pago, 
             default='SIN PAGO REGISTRADO'
         )
         
-        print("✅ Rango de último pago inicial calculado.")
         return reporte_df

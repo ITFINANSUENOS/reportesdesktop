@@ -138,49 +138,72 @@ class ReportService:
         if asesores_sheets_data:
             print("\n🔍 Procesando archivo de Asesores (Multi-hoja)...")
             
-            for item in asesores_sheets_data:
-                config_item = item.get('config', {})
-                
-                nombre_hoja = config_item.get('sheet_name', 'DESCONOCIDO')
-                col_merge_config = config_item.get('merge_on')
-                df_hoja = item.get('data')
-                
-                if df_hoja is None or df_hoja.empty:
+            for i, item in enumerate(asesores_sheets_data):
+                # 1. VALIDACIÓN DE ESTRUCTURA (Anti-Crash)
+                # Si por alguna razón el DataLoader devolvió solo un DataFrame (sin config), lo saltamos o manejamos
+                if not isinstance(item, dict):
+                    print(f"⚠️ Advertencia: El item #{i} no es un diccionario válido. Saltando.")
                     continue
 
+                # 2. EXTRACCIÓN SEGURA (Soluciona KeyError 'sheet_name')
+                # Usamos .get() para que nunca falle si falta la llave
+                config_item = item.get('config', {})
+                df_hoja = item.get('data')
+                
+                # Extraemos el nombre desde 'config', no desde 'item'
+                nombre_hoja = config_item.get('sheet_name', 'DESCONOCIDO')
+                col_merge_config = config_item.get('merge_on')
+
+                # Validaciones básicas
+                if df_hoja is None or df_hoja.empty:
+                    print(f"⚠️ La hoja '{nombre_hoja}' está vacía o no se cargó.")
+                    continue
+                
                 if not col_merge_config:
                     print(f"⚠️ Saltando {nombre_hoja}: No tiene configuración 'merge_on'.")
                     continue
 
+                # ---------------------------------------------------------
                 # CASO 1: HOJA PRINCIPAL DE ASESORES
+                # ---------------------------------------------------------
                 if nombre_hoja == "ASESORES":
                     print(f"   ⚡ Aplicando lógica de Vendedor Activo a: {nombre_hoja}")
                     
-                    # 1. Limpiar llave del Excel (Int sin decimales)
-                    # Convertimos a numérico, los errores a NaN, llenamos con 0 y pasamos a int
-                    df_hoja[col_merge_config] = (
-                        pd.to_numeric(df_hoja[col_merge_config], errors='coerce')
-                        .fillna(0).astype(int)
-                    )
+                    # Verificar que la columna exista antes de operar
+                    if col_merge_config not in df_hoja.columns:
+                        print(f"❌ Error: Columna '{col_merge_config}' no encontrada en Excel.")
+                        continue
 
-                    # 2. Calcular Vendedor Activo
+                    # 3. LIMPIEZA DE LLAVE (Soluciona 'float has no len' indirectamente)
+                    # Convertimos a string primero para quitar espacios, luego a numérico
+                    # Esto evita errores si Windows leyó la columna como Texto con espacios o Float
+                    try:
+                        df_hoja[col_merge_config] = (
+                            pd.to_numeric(df_hoja[col_merge_config], errors='coerce')
+                            .fillna(0).astype(int)
+                        )
+                    except Exception as e:
+                        print(f"❌ Error convirtiendo llave en {nombre_hoja}: {e}")
+                        continue
+
+                    # Calcular Vendedor Activo
                     codigos_activos = set(df_hoja[col_merge_config].unique())
                     print(f"      -> {len(codigos_activos)} vendedores activos detectados.")
 
-                    # 3. Preparar llave en el Reporte (Int sin decimales) para cruzar
+                    # Preparar llave en el Reporte
                     col_temp_reporte = f"{col_merge_config}_Clean_Int"
                     reporte_final[col_temp_reporte] = (
                         pd.to_numeric(reporte_final[col_merge_config], errors='coerce')
                         .fillna(0).astype(int)
                     )
 
-                    # 4. Asignar estado ACTIVO/INACTIVO
+                    # Asignar estado
                     reporte_final['Vendedor_Activo'] = np.where(
                         reporte_final[col_temp_reporte].isin(codigos_activos),
                         'ACTIVO', 'INACTIVO'
                     )
 
-                    # 5. Merge
+                    # Merge
                     df_hoja = df_hoja.drop_duplicates(subset=[col_merge_config])
                     reporte_final = pd.merge(
                         reporte_final,
@@ -191,28 +214,25 @@ class ReportService:
                         suffixes=('', '_Maestro')
                     )
                     
-                    # Limpieza
+                    # Limpieza de columnas temporales
                     reporte_final.drop(col_temp_reporte, axis=1, inplace=True)
                     if f'{col_merge_config}_Maestro' in reporte_final.columns:
                         reporte_final.drop(f'{col_merge_config}_Maestro', axis=1, inplace=True)
 
+                # ---------------------------------------------------------
                 # CASO 2: OTRAS HOJAS (Centro Costos, etc.)
+                # ---------------------------------------------------------
                 else:
                     print(f"   🔗 Cruzando hoja auxiliar: {nombre_hoja}")
                     
-                    # Validamos que la columna llave exista en el reporte principal
                     if col_merge_config in reporte_final.columns:
-                        
-                        # Estandarizamos ambas llaves a INT para asegurar que crucen
-                        # (Si R91 tiene centro costo 10 y Excel 10.0, esto lo arregla)
-                        
                         # Limpieza Excel
                         df_hoja[col_merge_config] = (
                             pd.to_numeric(df_hoja[col_merge_config], errors='coerce')
                             .fillna(0).astype(int)
                         )
                         
-                        # Limpieza Reporte (Temporal)
+                        # Limpieza Reporte
                         col_temp_reporte = f"{col_merge_config}_Temp_Merge"
                         reporte_final[col_temp_reporte] = (
                             pd.to_numeric(reporte_final[col_merge_config], errors='coerce')

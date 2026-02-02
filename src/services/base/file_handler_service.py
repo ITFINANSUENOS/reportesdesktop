@@ -11,12 +11,6 @@ class FileHandlerService:
         """
         Lee un archivo Excel y lo devuelve como un DataFrame de pandas.
         Maneja posibles errores durante la lectura.
-
-        Args:
-            file_path: La ruta al archivo Excel.
-
-        Returns:
-            Un DataFrame con los datos o None si ocurre un error.
         """
         try:
             print(f"📖 Leyendo archivo base desde: {file_path}")
@@ -36,11 +30,6 @@ class FileHandlerService:
     def save_report_to_excel(self, output_path: str, reports: Dict[str, pd.DataFrame]):
         """
         Guarda múltiples DataFrames en un único archivo Excel, cada uno en una hoja.
-
-        Args:
-            output_path: La ruta donde se guardará el archivo.
-            reports: Un diccionario donde la clave es el nombre de la hoja
-                     y el valor es el DataFrame a guardar.
         """
         print(f"💾 Guardando reporte en {output_path}...")
         try:
@@ -61,9 +50,21 @@ class FileHandlerService:
                 corrections_report = reports.get('reporte_correcciones')
                 if corrections_report is not None and not corrections_report.empty:
                     print("  - 🎨 Aplicando estilos a la hoja de correcciones...")
-                    styled_df = corrections_report.style.applymap(self._apply_styles)
+                    
+                    # --- CORRECCIÓN DE COMPATIBILIDAD PANDAS ---
+                    styler = corrections_report.style
+                    
+                    # Intentamos usar .map (Pandas nuevo), si falla usamos .applymap (Pandas viejo)
+                    if hasattr(styler, "map"):
+                         styled_df = styler.map(self._apply_styles)
+                    else:
+                         styled_df = styler.applymap(self._apply_styles)
+                    
                     styled_df.to_excel(writer, sheet_name='Registros_Para_Corregir', index=False)
                     print("  - ✅ Hoja 'Registros_Para_Corregir' añadida con colores.")
         except Exception as e:
             print(f"Error al guardar el archivo Excel: {e}")
+            # Importante: Imprimimos el tipo de error para debug
+            import traceback
+            traceback.print_exc()
             raise IOError(f"No se pudo guardar el archivo Excel: {e}")

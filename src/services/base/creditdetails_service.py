@@ -139,7 +139,11 @@ class CreditDetailsService:
             mask_anticipados = resumen_creditos.index.isin(creditos_anticipados)
             for col in columnas_a_marcar:
                 if col in resumen_creditos.columns:
+                    # ✅ CORRECCIÓN APLICADA AQUÍ:
+                    resumen_creditos[col] = resumen_creditos[col].astype(object)
+                    
                     resumen_creditos.loc[mask_anticipados, col] = 'ANTICIPADO'
+        
         print("✅ Resumen de vencimientos creado.")
         return resumen_creditos.reset_index(), creditos_con_negativos
 
@@ -152,6 +156,10 @@ class CreditDetailsService:
             columnas_mora_a_limpiar = ['Fecha_Cuota_Atraso', 'Primera_Cuota_Mora', 'Valor_Cuota_Atraso', 'Valor_Vencido']
             for col in columnas_mora_a_limpiar:
                 if col in reporte_df.columns:
+                    # --- CORRECCIÓN PREVENTIVA ---
+                    # Aseguramos que acepte texto ("SIN MORA")
+                    reporte_df[col] = reporte_df[col].astype(object)
+                    
                     valor_a_poner = 0 if 'Valor' in col else 'SIN MORA'
                     reporte_df.loc[sin_mora_mask, col] = valor_a_poner
         return reporte_df

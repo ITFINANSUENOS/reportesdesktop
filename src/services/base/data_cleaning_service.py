@@ -75,7 +75,10 @@ class DataCleaningService:
         return df
     
     def _obtener_serie_valida(self, series: pd.Series, solo_10_digitos: bool = False) -> pd.Series:
-        s_temp = series.astype(str)
+        # 1. BLINDAJE INICIAL: Rellenar Nulos antes de convertir a String
+        # Esto evita que NaN se convierta en el flotante nan durante el proceso
+        s_temp = series.fillna('').astype(str)
+        
         s_temp = s_temp.str.replace(r'\.0$', '', regex=True)
         telefonos_limpios = s_temp.str.replace(r'\D', '', regex=True)
 
@@ -87,13 +90,19 @@ class DataCleaningService:
         prefijos_fijos_validos = ('2', '4', '5', '6', '7', '8')
         es_fijo_local_valido = (telefonos_limpios.str.len() == 7) & (telefonos_limpios.str.startswith(prefijos_fijos_validos))
         
-        no_son_repetidos = telefonos_limpios.apply(lambda x: len(set(x)) > 1 if len(x) > 0 else False)
+        # 2. CORRECCIÓN DEL ERROR 'float has no len':
+        # Rellenamos con vacío por seguridad antes del apply
+        telefonos_limpios = telefonos_limpios.fillna('') 
+        
+        # Lambda protegida: forzamos str(x) por si acaso se colara un float
+        no_son_repetidos = telefonos_limpios.apply(
+            lambda x: len(set(str(x))) > 1 if x and len(str(x)) > 0 else False
+        )
         
         if solo_10_digitos:
             mask_formato_valido = (es_celular_valido | es_fijo_nacional_valido)
         else:
             mask_formato_valido = (es_celular_valido | es_fijo_nacional_valido | es_fijo_local_valido)
-
 
         mask_final_valido = mask_formato_valido & no_son_repetidos
         return telefonos_limpios.where(mask_final_valido, np.nan)

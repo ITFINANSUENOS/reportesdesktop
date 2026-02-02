@@ -80,23 +80,59 @@ class ReportProcessorService:
         ]
         for col in columnas_de_fecha:
             if col in df.columns:
+                # --- CORRECCIÓN CRÍTICA ---
+                # 1. Forzamos la columna a tipo 'object' (Genérico) para que acepte
+                #    tanto fechas reales como textos ("ANTICIPADO", "SIN MORA").
+                #    Esto evita el error "Invalid value for dtype 'str'".
+                df[col] = df[col].astype(object)
+
                 mask_no_anticipado = df[col] != 'ANTICIPADO'
-                df.loc[mask_no_anticipado, col] = pd.to_datetime(
-                    df.loc[mask_no_anticipado, col], errors='coerce'
-                ).dt.date
+                
+                # 2. Convertimos a fecha solo lo que no es 'ANTICIPADO'
+                #    Los textos como 'SIN MORA' se volverán NaT (Nulo) gracias a errors='coerce'
+                #    y luego se llenarán en el paso _fill_final_na.
+                try:
+                    fechas_convertidas = pd.to_datetime(
+                        df.loc[mask_no_anticipado, col], 
+                        errors='coerce'  # Si falla (ej: 'SIN MORA'), lo vuelve NaT
+                    ).dt.date
+                    
+                    df.loc[mask_no_anticipado, col] = fechas_convertidas
+                except Exception as e:
+                    print(f"⚠️ No se pudo formatear la columna {col}: {e}")
+
         return df
 
     def _fill_final_na(self, df):
         print(" Aplicando valores por defecto y formato de presentación...")
+        
         columnas_vencimiento = {
-            'Fecha_Cuota_Vigente': 'VIGENCIA EXPIRADA', 'Cuota_Vigente': 'VIGENCIA EXPIRADA',
-            'Valor_Cuota_Vigente': 'VIGENCIA EXPIRADA', 'Fecha_Cuota_Atraso': 'SIN MORA',
-            'Primera_Cuota_Mora': 'SIN MORA', 'Valor_Cuota_Atraso': 0, 'Valor_Vencido': 0
+            'Fecha_Cuota_Vigente': 'VIGENCIA EXPIRADA', 
+            'Cuota_Vigente': 'VIGENCIA EXPIRADA',
+            'Valor_Cuota_Vigente': 'VIGENCIA EXPIRADA', 
+            'Fecha_Cuota_Atraso': 'SIN MORA',
+            'Primera_Cuota_Mora': 'SIN MORA', 
+            'Valor_Cuota_Atraso': 0, 
+            'Valor_Vencido': 0
         }
+        
         ref_col_anticipado = 'Cuota_Vigente'
+        
         for col, default_value in columnas_vencimiento.items():
             if col in df.columns:
-                mask = df[col].isnull() & (df[ref_col_anticipado] != 'ANTICIPADO')
+                # --- CORRECCIÓN CRÍTICA ---
+                # Si el valor por defecto es Texto (ej: "VIGENCIA EXPIRADA"), 
+                # forzamos la columna a ser 'object' para que acepte el texto
+                # sin chocar con los números existentes.
+                if isinstance(default_value, str):
+                    df[col] = df[col].astype(object)
+
+                # Aplicamos la lógica de relleno
+                if ref_col_anticipado in df.columns:
+                    mask = df[col].isnull() & (df[ref_col_anticipado] != 'ANTICIPADO')
+                else:
+                    mask = df[col].isnull()
+                
                 df.loc[mask, col] = default_value
 
         mask_no_fns = df['Empresa'] != 'FINANSUEÑOS'
@@ -104,6 +140,7 @@ class ReportProcessorService:
             if col in df.columns:
                 df[col] = df[col].astype(object)
                 df.loc[mask_no_fns, col] = 'NO APLICA'
+                
         return df
 
     def _format_percentages(self, df):
