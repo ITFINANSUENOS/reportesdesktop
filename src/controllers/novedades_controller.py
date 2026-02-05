@@ -272,12 +272,11 @@ class NovedadesAnalisisController:
             orden_columnas_analisis = [
                 'Empresa', 'Credito', 'Fecha_Desembolso', 'Factura_Venta', 'Fecha_Facturada',
                 'Nombre_Producto', 'Cantidad_Producto', 'Obsequio', 'Cantidad_Obsequio',
-                'Cantidad_Total_Producto', 'Cedula_Cliente', 'Nombre_Cliente', 'Correo',
-                'Celular', 'Direccion', 'Barrio', 'Nombre_Ciudad', 'Zona', 'Cobrador',
-                'Telefono_Cobrador', 'Zona_Cobro', 'Call_Center_Apoyo', 'Nombre_Call_Center',
-                'Telefono_Call_Center', 'Regional_Cobro', 'Gestor', 'Telefono_Gestor',
-                'Jefe_ventas', 'Codigo_Vendedor', 'Nombre_Vendedor', 'Movil_Vendedor',
-                'Vendedor_Activo', 'Lider_Zona', 'Movil_Lider', 'Codigo_Centro_Costos',
+                'Cedula_Cliente', 'Nombre_Cliente', 'Correo','Celular','Direccion', 'Barrio',
+                'Nombre_Ciudad','Zona', 'Cobrador','Telefono_Cobrador', 'Zona_Cobro',
+                'Call_Center_Apoyo', 'Nombre_Call_Center','Telefono_Call_Center', 'Regional_Cobro',
+                'Gestor', 'Telefono_Gestor','Jefe_ventas', 'Codigo_Vendedor','Cedula_Vendedor',
+                'Nombre_Vendedor','Vendedor_Activo','Zona_Venta','Lider_Zona', 'Codigo_Centro_Costos',
                 'Regional_Venta', 'Codeudor1', 'Nombre_Codeudor1', 'Telefono_Codeudor1',
                 'Ciudad_Codeudor1', 'Codeudor2', 'Nombre_Codeudor2', 'Telefono_Codeudor2',
                 'Ciudad_Codeudor2', 'Valor_Desembolso', 'Total_Cuotas', 'Valor_Cuota',
@@ -285,8 +284,8 @@ class NovedadesAnalisisController:
                 'Saldo_Avales', 'Meta_Intereses', 'Meta_General','Meta_Saldo', 'Meta_%', 'Meta_$',
                 'Meta_T.R_%', 'Meta_T.R_$', 'Cuotas_Pagadas', 'Cuota_Vigente',
                 'Fecha_Cuota_Vigente', 'Valor_Cuota_Vigente', 'Fecha_Cuota_Atraso',
-                'Primera_Cuota_Mora', 'Valor_Cuota_Atraso', 'Valor_Vencido',
-                'Fecha_Ultima_Novedad', 'Cantidad_Novedades','Fecha_Ultimo_pago','Rango_Ultimo_pago', 'Dias_Atraso_Final',
+                'Primera_Cuota_Mora', 'Fecha_Ultimo_Pago_Inicial', 'Rango_Ultimo_pago_Inicial',
+                'Valor_Cuota_Atraso', 'Valor_Vencido','Fecha_Ultima_Novedad', 'Cantidad_Novedades','Fecha_Ultimo_pago','Rango_Ultimo_pago', 'Dias_Atraso_Final',
                 'Franja_Meta_Final','Franja_Cartera_Final', 'Rodamiento','Rodamiento_Cartera' ,
                 'Recaudo_Anticipado', 'Recaudo_Meta','Total_Recaudo','Total_Recaudo_Sin_Anti'
             ]

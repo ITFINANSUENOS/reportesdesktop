@@ -91,6 +91,7 @@ configuracion = {
     #Tipos de datos para reporte base
     "BASE_MENSUAL": {
         "dtype_map": {
+            'Empresa':str,
             'Cedula_Cliente': str,
             'Numero_Credito': str,
             'Primera_Cuota_Mora':str,

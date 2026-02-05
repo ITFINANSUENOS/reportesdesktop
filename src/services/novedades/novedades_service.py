@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 
 class NovedadesService:
     def __init__(self, config):
@@ -19,6 +20,7 @@ class NovedadesService:
             return df_base, pd.DataFrame()
 
         # --- 1. Preparar el DataFrame de Novedades Detallado ---
+        # Aseguramos datetime
         df_novedades['Fecha_Novedad'] = pd.to_datetime(df_novedades['Fecha_Novedad'], errors='coerce')
         df_novedades.dropna(subset=['Cedula_Cliente', 'Fecha_Novedad'], inplace=True)
         df_novedades['Cedula_Cliente'] = df_novedades['Cedula_Cliente'].astype(str).str.strip()
@@ -42,8 +44,9 @@ class NovedadesService:
 
         df_base_enriquecido = pd.merge(df_base_enriquecido, resumen_novedades, on='Cedula_Cliente', how='left')
         
-        df_base_enriquecido['Cantidad_Novedades'].fillna(0, inplace=True)
-        df_base_enriquecido['Cantidad_Novedades'] = df_base_enriquecido['Cantidad_Novedades'].astype(int)
+        # --- CORRECCIÓN CRÍTICA AQUÍ ---
+        # Reemplazamos el inplace=True por asignación directa y encadenada
+        df_base_enriquecido['Cantidad_Novedades'] = df_base_enriquecido['Cantidad_Novedades'].fillna(0).astype(int)
         
         print("📅 Formateando fechas (eliminando la hora)...")
         if 'Fecha_Ultima_Novedad' in df_base_enriquecido.columns:
@@ -53,26 +56,32 @@ class NovedadesService:
             if col in reporte_novedades_detallado.columns:
                 reporte_novedades_detallado[col] = pd.to_datetime(reporte_novedades_detallado[col], errors='coerce').dt.date
         
-        # --- INICIO DE LA MODIFICACIÓN ---
         print("🔄 Agrupando tipos de novedad en 'OTRAS GESTIONES'...")
 
         # 1. Definimos los códigos que NO queremos agrupar.
         codigos_especiales = ['C02', 'C04', 'C03', 'C10']
-        reporte_novedades_detallado.loc[
-            ~reporte_novedades_detallado['Codigo_Novedad'].isin(codigos_especiales),
-            'Tipo_Novedad'
-        ] = 'OTRAS GESTIONES'
-        # --- FIN DE LA MODIFICACIÓN ---
-
-        reporte_novedades_detallado.loc[
-            reporte_novedades_detallado['Tipo_Novedad'] != 'COMPROMISO DE PAGO', 
-            'Fecha_Compromiso'
-        ] = 'SIN COMPROMISO'
+        if 'Codigo_Novedad' in reporte_novedades_detallado.columns:
+            reporte_novedades_detallado.loc[
+                ~reporte_novedades_detallado['Codigo_Novedad'].isin(codigos_especiales),
+                'Tipo_Novedad'
+            ] = 'OTRAS GESTIONES'
+        
+        # --- BLINDAJE EXTRA: Fecha Compromiso ---
+        # Convertimos a object para que acepte el texto "SIN COMPROMISO" sin error
+        if 'Fecha_Compromiso' in reporte_novedades_detallado.columns:
+            reporte_novedades_detallado['Fecha_Compromiso'] = reporte_novedades_detallado['Fecha_Compromiso'].astype(object)
+            
+            reporte_novedades_detallado.loc[
+                reporte_novedades_detallado['Tipo_Novedad'] != 'COMPROMISO DE PAGO', 
+                'Fecha_Compromiso'
+            ] = 'SIN COMPROMISO'
     
         # Reordenar columnas para la hoja de novedades
         columnas_novedades = [
-                                'Empresa','Cedula_Cliente', 'Nombre_Cliente', 'Fecha_Novedad', 'Usuario_Novedad','Telefono_Cliente','Celular_Cliente', 'Codigo_Novedad',
-                                'Tipo_Novedad', 'Novedad','Valor','Fecha_Compromiso']
+            'Empresa','Cedula_Cliente', 'Nombre_Cliente', 'Fecha_Novedad', 'Usuario_Novedad',
+            'Telefono_Cliente','Celular_Cliente', 'Codigo_Novedad',
+            'Tipo_Novedad', 'Novedad','Valor','Fecha_Compromiso'
+        ]
         columnas_existentes = [col for col in columnas_novedades if col in reporte_novedades_detallado.columns]
         reporte_novedades_detallado = reporte_novedades_detallado.reindex(columns=columnas_existentes)
                                 

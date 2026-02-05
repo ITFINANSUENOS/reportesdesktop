@@ -36,32 +36,39 @@ class PagosService:
     def generar_reporte_pagos(self, df_analisis_cartera, datos_nomina):
         print("🔄 Generando reporte de pagos completo...")
         
-        # --- Limpieza y preparación (Igual que antes) ---
+        # --- Limpieza y preparación ---
         df_analisis_cartera = df_analisis_cartera.copy()
         columnas_numericas = ['Meta_$', 'Recaudo_Meta', 'Total_Recaudo_Sin_Anti', 'Meta_T.R_$']
         for col in columnas_numericas:
             if col in df_analisis_cartera.columns:
                 df_analisis_cartera[col] = pd.to_numeric(df_analisis_cartera[col], errors='coerce').fillna(0)
         
+        # Limpieza robusta de textos
         columnas_texto = ['Zona', 'Regional_Cobro', 'Franja_Meta', 'Cobrador', 'Gestor', 'Credito']
         for col in columnas_texto:
             if col in df_analisis_cartera.columns:
-                df_analisis_cartera[col] = df_analisis_cartera[col].astype(str).str.strip().str.upper().replace('NAN', '')
+                # Forzamos conversión a string para eliminar floats NaN desde el origen
+                df_analisis_cartera[col] = df_analisis_cartera[col].fillna('').astype(str).str.strip().str.upper().replace('NAN', '')
 
         franjas_validas = ['1 A 30', '31 A 90', '91 A 180', '181 A 360']
         df_filtrado = df_analisis_cartera[df_analisis_cartera['Franja_Meta'].isin(franjas_validas)].copy()
         zonas_a_omitir = ['1CE', 'CEC', 'CL1', 'CL2', 'CL3', 'CL4']
         df_filtrado = df_filtrado[~df_filtrado['Zona'].isin(zonas_a_omitir)]
 
-        # --- Agrupaciones (Igual que antes) ---
+        # --- Agrupaciones ---
         df_agrupado_franjas_zonas = df_filtrado.groupby(['Regional_Cobro', 'Zona', 'Cobrador', 'Franja_Meta']).agg({'Meta_$': 'sum', 'Recaudo_Meta': 'sum'}).reset_index()
         df_agrupado_franjas_gestores = df_filtrado.groupby(['Gestor', 'Franja_Meta']).agg({'Meta_$': 'sum', 'Recaudo_Meta': 'sum'}).reset_index()
         df_unico_credito = df_filtrado.drop_duplicates(subset=['Credito'])
         df_totales_zonas = df_unico_credito.groupby(['Regional_Cobro', 'Zona', 'Cobrador']).agg({'Total_Recaudo_Sin_Anti': 'sum', 'Meta_T.R_$': 'sum'}).reset_index()
         df_totales_gestores = df_unico_credito.groupby(['Gestor']).agg({'Total_Recaudo_Sin_Anti': 'sum', 'Meta_T.R_$': 'sum'}).reset_index()
-        gestor_regional_map = df_filtrado.groupby('Gestor')['Regional_Cobro'].unique().apply(lambda x: ' / '.join(sorted(x))).to_dict()
 
-        # --- Pivots (Igual que antes) ---
+        # --- CORRECCIÓN CRÍTICA AQUÍ ---
+        # "Blindamos" el join convirtiendo cada valor a string explícitamente y filtrando vacíos
+        gestor_regional_map = df_filtrado.groupby('Gestor')['Regional_Cobro'].unique().apply(
+            lambda x: ' / '.join(sorted([str(val) for val in x if val and str(val).strip() != '']))
+        ).to_dict()
+
+        # --- Pivots ---
         df_pivot_zonas = df_agrupado_franjas_zonas.pivot_table(index=['Regional_Cobro', 'Zona', 'Cobrador'], columns='Franja_Meta', values=['Meta_$', 'Recaudo_Meta'], aggfunc='sum', fill_value=0)
         df_pivot_zonas.columns = [f'{val}_{franja}' for val, franja in df_pivot_zonas.columns]
         df_pivot_zonas.reset_index(inplace=True)
@@ -70,7 +77,7 @@ class PagosService:
         df_pivot_gestores.columns = [f'{val}_{franja}' for val, franja in df_pivot_gestores.columns]
         df_pivot_gestores.reset_index(inplace=True)
 
-        # --- MODIFICACIÓN IMPORTANTE: AGREGAR 'CC' AL HEADER ---
+        # --- Estructura del Reporte ---
         print("🏗️ Creando estructura del reporte final...")
         header = [
             ('ZONA', ''), ('REGIONAL', ''), ('NOMBRE', ''), ('CC', ''), 
@@ -96,23 +103,19 @@ class PagosService:
         df_final['ZONA'] = df_final['ZONA'].fillna('GESTOR')
         df_final.drop(columns=['NOMBRE_COBRADOR', 'NOMBRE_GESTOR'], inplace=True)
 
-        # --- NUEVO: CRUCE DE CÉDULAS EN EL REPORTE FINAL ---
+        # --- CRUCE DE CÉDULAS ---
         print("🆔 Asignando cédulas al reporte final...")
         if datos_nomina and 'CEDULAS' in datos_nomina and not datos_nomina['CEDULAS'].empty:
             df_cedulas = datos_nomina['CEDULAS']
-            # Aseguramos mayúsculas para el cruce
             df_final['NOMBRE_JOIN'] = df_final['NOMBRE'].astype(str).str.strip().str.upper()
             
-            # Hacemos el Merge
             df_final = pd.merge(df_final, df_cedulas, left_on='NOMBRE_JOIN', right_on='NOMBRE', how='left')
             
-            # Limpieza post-merge (df_cedulas trae columna 'NOMBRE' que se duplica como 'NOMBRE_y')
             if 'NOMBRE_y' in df_final.columns:
                 df_final.drop(columns=['NOMBRE_y'], inplace=True)
             if 'NOMBRE_x' in df_final.columns:
                 df_final.rename(columns={'NOMBRE_x': 'NOMBRE'}, inplace=True)
             
-            # Llenamos CC vacías con guión o vacío
             df_final['CC'] = df_final['CC'].fillna('')
         else:
             df_final['CC'] = ''
@@ -120,13 +123,12 @@ class PagosService:
         # --- Mapeo al DataFrame con MultiIndex ---
         df_reporte = pd.DataFrame(columns=pd.MultiIndex.from_tuples(header))
         
-        # Columnas de texto incluyendo la nueva CC
         df_reporte[('ZONA', '')] = df_final['ZONA']
         df_reporte[('REGIONAL', '')] = df_final['REGIONAL']
         df_reporte[('NOMBRE', '')] = df_final['NOMBRE']
-        df_reporte[('CC', '')] = df_final['CC']  # <--- MAPEAMOS LA DATA A LA COLUMNA
+        df_reporte[('CC', '')] = df_final['CC']
 
-        # --- (Resto del código: Llenado de métricas, cálculos, etc.) ---
+        # --- Llenado de métricas ---
         for franja_reporte, franja_pivot in franjas_map.items():
             meta_col, recaudo_col = f'Meta_$_{franja_pivot}', f'Recaudo_Meta_{franja_pivot}'
             df_reporte[(franja_reporte, 'META_$')] = df_final.get(meta_col, 0)
