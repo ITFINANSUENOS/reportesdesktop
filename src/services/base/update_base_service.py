@@ -1,6 +1,16 @@
 import pandas as pd
-import numpy as np 
-from src.models.base_model import ORDEN_COLUMNAS_FINAL, configuracion
+import numpy as np
+from src.models.base_model import (
+    ORDEN_COLUMNAS_FINAL,
+    configuracion,
+    DeteccionCreditos,
+    COLUMNAS_VOLATILES,
+    COLUMNAS_ESTATICAS,
+    COLUMNAS_MAESTROS,
+    COLUMNAS_ORGANIZACION,
+    COLUMNAS_DETECCION_CAMBIOS,
+)
+
 
 class UpdateBaseService:
     """
@@ -9,6 +19,7 @@ class UpdateBaseService:
     2. Enriquece el esqueleto consolidando los datos nuevos del mes con los del reporte anterior.
     3. Reutiliza las funciones de transformación y cálculo del servicio principal.
     """
+
     def __init__(self, report_service):
         self.report_service = report_service
         self.data_loader = report_service.data_loader
@@ -20,25 +31,29 @@ class UpdateBaseService:
         df_r91_nuevo = self.data_loader.safe_concat(dataframes_nuevos.get("R91", []))
         if df_r91_nuevo.empty:
             raise ValueError("El archivo R91 es obligatorio para la actualización.")
-        
+
         esqueleto_df = self.data_loader.create_credit_key(df_r91_nuevo)
-        print(f"\n[LOG] Esqueleto creado a partir de R91 con {len(esqueleto_df)} registros.")
+        print(
+            f"\n[LOG] Esqueleto creado a partir de R91 con {len(esqueleto_df)} registros."
+        )
 
         # --- PASO 2: Consolidar y unir cada fuente de datos ---
         for tipo, config in configuracion.items():
             if tipo == "R91":
                 continue
-            
+
             # --- INICIO DE LA CORRECCIÓN ---
             # 1. Establecemos la llave por defecto al inicio de CADA vuelta del bucle.
-            join_keys = ['Credito', 'Cedula_Cliente']
-            
+            join_keys = ["Credito", "Cedula_Cliente"]
+
             # 2. El 'if' ahora solo SOBREESCRIBE el valor por defecto en casos especiales.
             if tipo in ["MATRIZ_CARTERA", "METAS_FRANJAS"]:
-                join_keys = ['Zona']
+                join_keys = ["Zona"]
             elif tipo in ["ASESORES", "SC04"]:
                 # Simplificamos la omisión de casos especiales
-                print(f"   - Omitiendo '{tipo}' en la consolidación inicial (se procesará después).")
+                print(
+                    f"   - Omitiendo '{tipo}' en la consolidación inicial (se procesará después)."
+                )
                 continue
             # --- FIN DE LA CORRECCIÓN ---
 
@@ -52,64 +67,233 @@ class UpdateBaseService:
                 if key not in columnas_del_tipo:
                     columnas_del_tipo.append(key)
 
-            df_nuevos_datos = self.data_loader.safe_concat(dataframes_nuevos.get(tipo, []))
-            
-            columnas_existentes_en_anterior = [col for col in columnas_del_tipo if col in df_base_anterior.columns]
+            df_nuevos_datos = self.data_loader.safe_concat(
+                dataframes_nuevos.get(tipo, [])
+            )
+
+            columnas_existentes_en_anterior = [
+                col for col in columnas_del_tipo if col in df_base_anterior.columns
+            ]
             df_datos_viejos = df_base_anterior[columnas_existentes_en_anterior].copy()
-            
+
             df_consolidado = pd.DataFrame()
 
             if not df_nuevos_datos.empty:
-                if 'Credito' not in df_nuevos_datos.columns and 'Credito' in join_keys:
-                     df_nuevos_datos = self.data_loader.create_credit_key(df_nuevos_datos)
-                
-                df_combinado = pd.concat([df_nuevos_datos, df_datos_viejos], ignore_index=True)
-                df_consolidado = df_combinado.drop_duplicates(subset=join_keys, keep='first')
+                if "Credito" not in df_nuevos_datos.columns and "Credito" in join_keys:
+                    df_nuevos_datos = self.data_loader.create_credit_key(
+                        df_nuevos_datos
+                    )
+
+                df_combinado = pd.concat(
+                    [df_nuevos_datos, df_datos_viejos], ignore_index=True
+                )
+                df_consolidado = df_combinado.drop_duplicates(
+                    subset=join_keys, keep="first"
+                )
             elif not df_datos_viejos.empty:
-                df_consolidado = df_datos_viejos.drop_duplicates(subset=join_keys, keep='first')
-            
+                df_consolidado = df_datos_viejos.drop_duplicates(
+                    subset=join_keys, keep="first"
+                )
+
             if df_consolidado.empty:
                 continue
 
-            print(f"   - Consolidando y uniendo datos de '{tipo}' usando la llave: {join_keys}...")
-            
-            esqueleto_df = pd.merge(esqueleto_df, df_consolidado, on=join_keys, how='left', suffixes=('', f'_{tipo}_dup'))
+            print(
+                f"   - Consolidando y uniendo datos de '{tipo}' usando la llave: {join_keys}..."
+            )
+
+            esqueleto_df = pd.merge(
+                esqueleto_df,
+                df_consolidado,
+                on=join_keys,
+                how="left",
+                suffixes=("", f"_{tipo}_dup"),
+            )
 
         print("\n[LOG] Todas las fuentes de datos han sido unidas al esqueleto.")
         reporte_df = esqueleto_df.copy()
 
         # --- PASO 3: (Sin cambios) Reutilizar las funciones de transformación ---
         print("\n[LOG] Aplicando transformaciones y cálculos finales...")
-        reporte_df, negativos_finales, _ = self._aplicar_transformaciones(reporte_df, dataframes_nuevos)
-        reporte_final, reporte_correcciones = self.report_service.report_processor.finalize_report(reporte_df, ORDEN_COLUMNAS_FINAL)
+        reporte_df, negativos_finales, _ = self._aplicar_transformaciones(
+            reporte_df, dataframes_nuevos
+        )
+        reporte_final, reporte_correcciones = (
+            self.report_service.report_processor.finalize_report(
+                reporte_df, ORDEN_COLUMNAS_FINAL
+            )
+        )
 
-        print(f"\n✅ Proceso de sincronización completado. Registros finales: {len(reporte_final)}")
+        print(
+            f"\n✅ Proceso de sincronización completado. Registros finales: {len(reporte_final)}"
+        )
         return reporte_final, negativos_finales, reporte_correcciones
-    
+
     def _aplicar_transformaciones(self, reporte_df, dataframes_nuevos):
         # Esta función es un contenedor para las llamadas de servicio que ya tienes.
         # Es casi idéntica a la que tenías antes, pero ahora actúa sobre la base consolidada.
-        
+
         # Cargar DataFrames necesarios para las funciones
         crtmp_df = self.data_loader.create_credit_key(
-            self.data_loader.safe_concat(dataframes_nuevos.get("CRTMPCONSULTA1", [])))
+            self.data_loader.safe_concat(dataframes_nuevos.get("CRTMPCONSULTA1", []))
+        )
         sc04_df = self.data_loader.safe_concat(dataframes_nuevos.get("SC04", []))
-        fnz001_df = self.data_loader.create_credit_key(self.data_loader.safe_concat(dataframes_nuevos.get("FNZ001", [])))
-        fnz003_df = self.data_loader.create_credit_key(self.data_loader.safe_concat(dataframes_nuevos.get("FNZ003", [])))
-        vencimientos_df = self.data_loader.create_credit_key(self.data_loader.safe_concat(dataframes_nuevos.get("VENCIMIENTOS", [])))
-        
-        _, negativos_vencimientos = self.report_service.credit_details.process_vencimientos_data(vencimientos_df)
-        
-        # Llamadas a los servicios que reutilizamos
-        reporte_df['Empresa'] = np.where(reporte_df['Tipo_Credito'] == 'DF', 'FINANSUEÑOS', 'ARPESOD')
-        reporte_df = self.report_service.products_sales.assign_sales_invoice(reporte_df, crtmp_df)
-        reporte_df = self.report_service.products_sales.add_product_details(reporte_df, crtmp_df)
-        reporte_df = self.report_service.credit_details.enrich_credit_details(reporte_df, sc04_df, fnz001_df)
-        reporte_df = self.report_service.credit_details.clean_installment_data(reporte_df)
-        reporte_df = self.report_service.report_processor.map_call_center_data(reporte_df)
-        reporte_df, negativos_fnz003 = self.report_service.report_processor.calculate_balances(reporte_df, fnz003_df)
-        reporte_df = self.report_service.report_processor.calculate_goal_metrics(reporte_df)
-        reporte_df = self.report_service.credit_details.adjust_arrears_status(reporte_df)
+        fnz001_df = self.data_loader.create_credit_key(
+            self.data_loader.safe_concat(dataframes_nuevos.get("FNZ001", []))
+        )
+        fnz003_df = self.data_loader.create_credit_key(
+            self.data_loader.safe_concat(dataframes_nuevos.get("FNZ003", []))
+        )
+        vencimientos_df = self.data_loader.create_credit_key(
+            self.data_loader.safe_concat(dataframes_nuevos.get("VENCIMIENTOS", []))
+        )
 
-        negativos_finales = pd.concat([negativos_vencimientos, negativos_fnz003], ignore_index=True)
+        _, negativos_vencimientos = (
+            self.report_service.credit_details.process_vencimientos_data(
+                vencimientos_df
+            )
+        )
+
+        # Llamadas a los servicios que reutilizamos
+        reporte_df["Empresa"] = np.where(
+            reporte_df["Tipo_Credito"] == "DF", "FINANSUEÑOS", "ARPESOD"
+        )
+        reporte_df = self.report_service.products_sales.assign_sales_invoice(
+            reporte_df, crtmp_df
+        )
+        reporte_df = self.report_service.products_sales.add_product_details(
+            reporte_df, crtmp_df
+        )
+        reporte_df = self.report_service.credit_details.enrich_credit_details(
+            reporte_df, sc04_df, fnz001_df
+        )
+        reporte_df = self.report_service.credit_details.clean_installment_data(
+            reporte_df
+        )
+        reporte_df = self.report_service.report_processor.map_call_center_data(
+            reporte_df
+        )
+        reporte_df, negativos_fnz003 = (
+            self.report_service.report_processor.calculate_balances(
+                reporte_df, fnz003_df
+            )
+        )
+        reporte_df = self.report_service.report_processor.calculate_goal_metrics(
+            reporte_df
+        )
+        reporte_df = self.report_service.credit_details.adjust_arrears_status(
+            reporte_df
+        )
+
+        negativos_finales = pd.concat(
+            [negativos_vencimientos, negativos_fnz003], ignore_index=True
+        )
         return reporte_df, negativos_finales, pd.DataFrame()
+
+    def _detectar_creditos_modificados(
+        self, df_r91_nuevo: pd.DataFrame, df_base_anterior: pd.DataFrame
+    ) -> DeteccionCreditos:
+        """Classifies every credit into exactly one of 4 categories.
+
+        Compares the new R91 (current month truth) against the previous base
+        report using set operations for O(1) membership tests.
+
+        Credits present in both sources are further checked against
+        COLUMNAS_DETECCION_CAMBIOS (Zona, Codigo_Vendedor, Zona_Cobro).
+        If any of those structural columns changed, the credit is marked
+        as 'modificado' so it gets fully re-processed downstream.
+
+        Args:
+            df_r91_nuevo: New R91 data with 'Credito' column already created.
+            df_base_anterior: Previous month's complete report.
+
+        Returns:
+            DeteccionCreditos with sets: nuevos, eliminados, modificados, intactos.
+        """
+        # --- Step 1: Build ID sets ---
+        ids_nuevos = set(df_r91_nuevo["Credito"].dropna().unique())
+        ids_anteriores = set(df_base_anterior["Credito"].dropna().unique())
+
+        # --- Step 2: Set operations for new / eliminated / common ---
+        nuevos = ids_nuevos - ids_anteriores
+        eliminados = ids_anteriores - ids_nuevos
+        comunes = ids_nuevos & ids_anteriores
+
+        # --- Step 3: Among common credits, detect structural changes ---
+        modificados: set[str] = set()
+        intactos: set[str] = set()
+
+        if comunes:
+            cols_deteccion = list(COLUMNAS_DETECCION_CAMBIOS)
+
+            # Filter to common credits only and select detection columns + key
+            cols_needed = ["Credito"] + cols_deteccion
+
+            # From R91: only keep columns that actually exist
+            comunes_list = list(comunes)
+            cols_r91 = [c for c in cols_needed if c in df_r91_nuevo.columns]
+            mask_nuevo = df_r91_nuevo["Credito"].isin(comunes_list)
+            df_nuevo_filtered = df_r91_nuevo.loc[mask_nuevo, cols_r91]
+            df_nuevo_subset = df_nuevo_filtered.drop_duplicates(
+                subset=["Credito"], keep="first"
+            ).set_index("Credito")
+
+            # From base anterior: only keep columns that actually exist
+            cols_anterior = [c for c in cols_needed if c in df_base_anterior.columns]
+            mask_anterior = df_base_anterior["Credito"].isin(comunes_list)
+            df_anterior_filtered = df_base_anterior.loc[mask_anterior, cols_anterior]
+            df_anterior_subset = df_anterior_filtered.drop_duplicates(
+                subset=["Credito"], keep="first"
+            ).set_index("Credito")
+
+            # Align both DataFrames to the same set of detection columns
+            # (in case a column is missing from one side)
+            cols_comunes = [
+                c
+                for c in cols_deteccion
+                if c in df_nuevo_subset.columns and c in df_anterior_subset.columns
+            ]
+
+            if cols_comunes:
+                # Fill NaN with empty string so NaN == NaN evaluates as True
+                df_nuevo_aligned = df_nuevo_subset[cols_comunes].fillna("").astype(str)
+                df_anterior_aligned = (
+                    df_anterior_subset[cols_comunes].fillna("").astype(str)
+                )
+
+                # Reindex to ensure both have the exact same rows (common credits)
+                common_index = df_nuevo_aligned.index.intersection(
+                    df_anterior_aligned.index
+                )
+                df_nuevo_aligned = df_nuevo_aligned.loc[common_index]
+                df_anterior_aligned = df_anterior_aligned.loc[common_index]
+
+                # Compare: True where values differ
+                cambios = (df_nuevo_aligned != df_anterior_aligned).any(axis=1)
+
+                modificados = set(cambios[cambios].index)
+                intactos = set(cambios[~cambios].index)
+            else:
+                # No detection columns available: treat all common as intact
+                intactos = comunes
+
+            # Credits in 'comunes' that weren't in either aligned DataFrame
+            # (edge case: duplicates or missing from one side after dedup)
+            no_clasificados = comunes - modificados - intactos
+            if no_clasificados:
+                # Conservative: treat unclassified as modified (re-process them)
+                modificados |= no_clasificados
+
+        print(f"\n📊 Detección de créditos completada:")
+        print(f"   ✅ Intactos:     {len(intactos):>6,}")
+        print(f"   🆕 Nuevos:       {len(nuevos):>6,}")
+        print(f"   🔄 Modificados:  {len(modificados):>6,}")
+        print(f"   ❌ Eliminados:   {len(eliminados):>6,}")
+        print(f"   📋 Total R91:    {len(ids_nuevos):>6,}")
+
+        return DeteccionCreditos(
+            nuevos=nuevos,
+            eliminados=eliminados,
+            modificados=modificados,
+            intactos=intactos,
+        )

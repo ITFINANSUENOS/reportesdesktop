@@ -1,241 +1,454 @@
+# ==============================================================================
+# CONSTANTES PARA UPDATE INCREMENTAL
+# Clasificación de columnas según su frecuencia de cambio.
+# Esto permite que el modo de actualización rápida solo recalcule lo necesario.
+# ==============================================================================
+from typing import TypedDict, Set
+
+
+class DeteccionCreditos(TypedDict):
+    """Estructura tipada para el resultado de la detección de cambios.
+
+    Cada campo es un set de IDs de crédito (columna 'Credito') que permite
+    operaciones rápidas de intersección/diferencia con complejidad O(1).
+    """
+
+    nuevos: Set[str]  # Créditos en R91 nuevo que NO estaban en la base anterior
+    eliminados: Set[str]  # Créditos en base anterior que YA NO están en R91 nuevo
+    modificados: Set[
+        str
+    ]  # Créditos que existen en ambos pero cambiaron (Zona, Vendedor)
+    intactos: Set[str]  # Créditos que existen en ambos SIN cambios estructurales
+
+
+# --- Columnas que SIEMPRE cambian mes a mes ---
+# Fuentes: R91 (metas), ANALISIS (mora), FNZ003 (saldos), VENCIMIENTOS (cuotas)
+# Incluye columnas calculadas que dependen de estos datos.
+COLUMNAS_VOLATILES = {
+    # Mora (ANALISIS / R91)
+    "Dias_Atraso",
+    "Cuotas_Pagadas",
+    "Saldo_Factura",
+    "Fecha_Ultimo_Pago_Inicial",
+    "Rango_Ultimo_pago_Inicial",  # Calculada desde Fecha_Ultimo_Pago_Inicial
+    # Saldos financieros (FNZ003)
+    "Saldo_Capital",
+    "Saldo_Interes_Corriente",
+    "Saldo_Avales",
+    # Cuotas vigentes (VENCIMIENTOS)
+    "Cuota_Vigente",
+    "Valor_Cuota_Vigente",
+    "Fecha_Cuota_Vigente",
+    "Fecha_Cuota_Atraso",
+    "Primera_Cuota_Mora",
+    "Valor_Cuota_Atraso",
+    "Valor_Vencido",
+    # Metas (R91 base + calculadas)
+    "Meta_Intereses",
+    "Meta_DC_Al_Dia",
+    "Meta_DC_Atraso",
+    "Meta_Atraso",
+    "Meta_Saldo",
+    "Meta_General",  # Calculada: DC_Al_Dia + DC_Atraso + Atraso
+    "Meta_%",  # Calculada desde Dias_Atraso + METAS_FRANJAS
+    "Meta_$",  # Calculada: Meta_General * Meta_%
+    "Meta_T.R_%",  # Desde METAS_FRANJAS
+    "Meta_T.R_$",  # Calculada: Meta_Saldo * Meta_T.R_%
+    # Franjas (calculadas desde Dias_Atraso)
+    "Franja_Meta",
+    "Franja_Cartera",
+}
+
+# --- Columnas que NUNCA cambian una vez creado el crédito ---
+# Fuentes: CRTMPCONSULTA1 (productos/facturas), SC04/FNZ001 (valores del crédito)
+COLUMNAS_ESTATICAS = {
+    "Fecha_Desembolso",
+    "Valor_Desembolso",
+    "Total_Cuotas",
+    "Valor_Cuota",
+    "Factura_Venta",
+    "Fecha_Facturada",
+    "Nombre_Producto",
+    "Cantidad_Producto",
+    "Obsequio",
+    "Cantidad_Obsequio",
+    "Cantidad_Total_Producto",
+    "Correo",
+    "Empresa",
+}
+
+# --- Datos maestros del cliente/codeudores (rara vez cambian) ---
+# Fuentes: R91 (nombre), VENCIMIENTOS (celular), R03 (codeudores), ANALISIS (dirección)
+COLUMNAS_MAESTROS = {
+    "Nombre_Cliente",
+    "Cedula_Cliente",
+    "Celular",
+    "Direccion",
+    "Barrio",
+    "Nombre_Ciudad",
+    "Codeudor1",
+    "Nombre_Codeudor1",
+    "Telefono_Codeudor1",
+    "Ciudad_Codeudor1",
+    "Codeudor2",
+    "Nombre_Codeudor2",
+    "Telefono_Codeudor2",
+    "Ciudad_Codeudor2",
+}
+
+# --- Estructura organizacional (cambia por reasignaciones de zona/vendedor) ---
+# Fuentes: R91 (zona/vendedor), MATRIZ_CARTERA (cobro/gestores), ASESORES (detalle vendedor)
+COLUMNAS_ORGANIZACION = {
+    "Zona",
+    "Zona_Cobro",
+    "Zona_Venta",
+    "Cobrador",
+    "Telefono_Cobrador",
+    "Nombre_Vendedor",
+    "Codigo_Vendedor",
+    "Cedula_Vendedor",
+    "Vendedor_Activo",
+    "Sede_Vendedor",
+    "Tipo_Asesor",
+    "Codigo_Centro_Costos",
+    "Regional_Cobro",
+    "Regional_Venta",
+    "Gestor",
+    "Telefono_Gestor",
+    "Jefe_ventas",
+    "Lider_Zona",
+    "Call_Center_Apoyo",
+    "Nombre_Call_Center",
+    "Telefono_Call_Center",
+}
+
+# Columnas estructurales que sirven para detectar si un crédito fue "modificado"
+# (reasignado a otra zona/vendedor). Si alguna de estas cambia entre el R91 nuevo
+# y la base anterior, el crédito se clasifica como MODIFICADO y se re-procesa completo.
+COLUMNAS_DETECCION_CAMBIOS = {
+    "Zona",
+    "Codigo_Vendedor",
+    "Zona_Cobro",
+}
+
+
+# ==============================================================================
 # CONFIGURACIÓN DE PROCESAMIENTO POR TIPO DE ARCHIVO
+# ==============================================================================
 configuracion = {
     "ANALISIS": {
         "engine": "xlrd",
-        "usecols": ["direccion", "barrio", "nomciudad","ultpago",
-                     "diasatras", "cuotaspag","cedula","saldofac","tipo","numero","fechadoc"],
-        "rename_map": { "direccion": "Direccion",
-                        "barrio": "Barrio",
-                        "nomciudad": "Nombre_Ciudad",
-                        "diasatras": "Dias_Atraso", 
-                        "cuotaspag": "Cuotas_Pagadas", 
-                        "cedula" : "Cedula_Cliente", 
-                        "tipo":"Tipo_Credito", 
-                        "numero":"Numero_Credito",
-                        "saldofac":"Saldo_Factura" ,
-                        "ultpago":"Fecha_Ultimo_Pago_Inicial",
-                        "fechadoc":"Fecha_Desembolso"
-                        }
+        "usecols": [
+            "direccion",
+            "barrio",
+            "nomciudad",
+            "ultpago",
+            "diasatras",
+            "cuotaspag",
+            "cedula",
+            "saldofac",
+            "tipo",
+            "numero",
+            "fechadoc",
+        ],
+        "rename_map": {
+            "direccion": "Direccion",
+            "barrio": "Barrio",
+            "nomciudad": "Nombre_Ciudad",
+            "diasatras": "Dias_Atraso",
+            "cuotaspag": "Cuotas_Pagadas",
+            "cedula": "Cedula_Cliente",
+            "tipo": "Tipo_Credito",
+            "numero": "Numero_Credito",
+            "saldofac": "Saldo_Factura",
+            "ultpago": "Fecha_Ultimo_Pago_Inicial",
+            "fechadoc": "Fecha_Desembolso",
+        },
     },
     "R91": {
-        "usecols": ["VINNOMBRE", "MCDZONA", "MCDVINCULA", "MCDNUMCRU1", "VENNOMBRE",
-                    "MCDTIPCRU1","VENCODIGO", "MCDCCOSTO", "MCDCOBRA","META_SALDO",
-                    "META_INTER", "META_DC_AL", "META_DC_AT", "META_ATRAS"],
-        "rename_map": { 
-                       "MCDTIPCRU1": "Tipo_Credito", 
-                       "MCDNUMCRU1": "Numero_Credito", 
-                       "MCDVINCULA" : "Cedula_Cliente", 
-                       "VINNOMBRE": "Nombre_Cliente", 
-                       "VENNOMBRE":"Nombre_Vendedor",
-                       "MCDZONA" : "Zona",  
-                       "MCDCOBRA": "Zona_Cobro",
-                       "VENCODIGO" : "Codigo_Vendedor",  
-                       "MCDCCOSTO" : "Codigo_Centro_Costos", 
-                       "META_INTER" : "Meta_Intereses", 
-                       "META_DC_AL" : "Meta_DC_Al_Dia", 
-                       "META_DC_AT" : "Meta_DC_Atraso",
-                       "META_SALDO" : "Meta_Saldo", 
-                       "META_ATRAS" : "Meta_Atraso" }
+        "usecols": [
+            "VINNOMBRE",
+            "MCDZONA",
+            "MCDVINCULA",
+            "MCDNUMCRU1",
+            "VENNOMBRE",
+            "MCDTIPCRU1",
+            "VENCODIGO",
+            "MCDCCOSTO",
+            "MCDCOBRA",
+            "META_SALDO",
+            "META_INTER",
+            "META_DC_AL",
+            "META_DC_AT",
+            "META_ATRAS",
+        ],
+        "rename_map": {
+            "MCDTIPCRU1": "Tipo_Credito",
+            "MCDNUMCRU1": "Numero_Credito",
+            "MCDVINCULA": "Cedula_Cliente",
+            "VINNOMBRE": "Nombre_Cliente",
+            "VENNOMBRE": "Nombre_Vendedor",
+            "MCDZONA": "Zona",
+            "MCDCOBRA": "Zona_Cobro",
+            "VENCODIGO": "Codigo_Vendedor",
+            "MCDCCOSTO": "Codigo_Centro_Costos",
+            "META_INTER": "Meta_Intereses",
+            "META_DC_AL": "Meta_DC_Al_Dia",
+            "META_DC_AT": "Meta_DC_Atraso",
+            "META_SALDO": "Meta_Saldo",
+            "META_ATRAS": "Meta_Atraso",
+        },
     },
     "VENCIMIENTOS": {
-        "usecols": ["MCNVINCULA", "SALDODOC", "VENCE", "VINTELEFON","VINTELEFO3","MCNCUOCRU1","MCNTIPCRU1","MCNNUMCRU1"],
-        "rename_map": {"MCNTIPCRU1":"Tipo_Credito", 
-                       "MCNNUMCRU1":"Numero_Credito", 
-                       "MCNVINCULA": "Cedula_Cliente", 
-                       "VINTELEFON" : "Celular",
-                       "VINTELEFO3":"Celular2", 
-                       "SALDODOC": "Valor_Cuota_Vigente", 
-                       "MCNCUOCRU1": "Cuota_Vigente", 
-                       "VENCE": "Fecha_Cuota_Vigente" }
+        "usecols": [
+            "MCNVINCULA",
+            "SALDODOC",
+            "VENCE",
+            "VINTELEFON",
+            "VINTELEFO3",
+            "MCNCUOCRU1",
+            "MCNTIPCRU1",
+            "MCNNUMCRU1",
+        ],
+        "rename_map": {
+            "MCNTIPCRU1": "Tipo_Credito",
+            "MCNNUMCRU1": "Numero_Credito",
+            "MCNVINCULA": "Cedula_Cliente",
+            "VINTELEFON": "Celular",
+            "VINTELEFO3": "Celular2",
+            "SALDODOC": "Valor_Cuota_Vigente",
+            "MCNCUOCRU1": "Cuota_Vigente",
+            "VENCE": "Fecha_Cuota_Vigente",
+        },
     },
-    "R03":{
-        "usecols": ["CODEUDOR1","NOMBRE1","VINTELEFON","VINMOVIL1","CIUNOMBRE1","CODEUDOR2","NOMBRE2",
-                    "VINTELEFO2","VINMOVIL2","CIUNOMBRE2","CEDULA","TIPO","NUMERO"],
-        "rename_map": { 
-                       "CODEUDOR1": "Codeudor1", 
-                       "NOMBRE1": "Nombre_Codeudor1", 
-                       "VINTELEFON": "Telefono_Codeudor1",
-                       "VINMOVIL1":"Movil_Codeudor1", 
-                       "CIUNOMBRE1": "Ciudad_Codeudor1", 
-                       "CODEUDOR2": "Codeudor2", 
-                       "NOMBRE2": "Nombre_Codeudor2", 
-                       "VINTELEFO2": "Telefono_Codeudor2", 
-                       "CIUNOMBRE2": "Ciudad_Codeudor2",
-                       "VINMOVIL2":"Movil_Codeudor2", 
-                       "CEDULA": "Cedula_Cliente",
-                       "TIPO":"Tipo_Credito",
-                       "NUMERO":"Numero_Credito"}
+    "R03": {
+        "usecols": [
+            "CODEUDOR1",
+            "NOMBRE1",
+            "VINTELEFON",
+            "VINMOVIL1",
+            "CIUNOMBRE1",
+            "CODEUDOR2",
+            "NOMBRE2",
+            "VINTELEFO2",
+            "VINMOVIL2",
+            "CIUNOMBRE2",
+            "CEDULA",
+            "TIPO",
+            "NUMERO",
+        ],
+        "rename_map": {
+            "CODEUDOR1": "Codeudor1",
+            "NOMBRE1": "Nombre_Codeudor1",
+            "VINTELEFON": "Telefono_Codeudor1",
+            "VINMOVIL1": "Movil_Codeudor1",
+            "CIUNOMBRE1": "Ciudad_Codeudor1",
+            "CODEUDOR2": "Codeudor2",
+            "NOMBRE2": "Nombre_Codeudor2",
+            "VINTELEFO2": "Telefono_Codeudor2",
+            "CIUNOMBRE2": "Ciudad_Codeudor2",
+            "VINMOVIL2": "Movil_Codeudor2",
+            "CEDULA": "Cedula_Cliente",
+            "TIPO": "Tipo_Credito",
+            "NUMERO": "Numero_Credito",
+        },
     },
-    "SC04":{
-        "usecols":["FACTURA","SLCVALOR","SLCNCUOTAS","SLCPAGOINI"],
-        "rename_map":{ 
-                        "FACTURA": "Factura_Venta",
-                        "SLCVALOR": "Valor_Cuota", 
-                        "SLCNCUOTAS": "Total_Cuotas",
-                        "SLCPAGOINI":"Pago_Inicial"
-        }
+    "SC04": {
+        "usecols": ["FACTURA", "SLCVALOR", "SLCNCUOTAS", "SLCPAGOINI"],
+        "rename_map": {
+            "FACTURA": "Factura_Venta",
+            "SLCVALOR": "Valor_Cuota",
+            "SLCNCUOTAS": "Total_Cuotas",
+            "SLCPAGOINI": "Pago_Inicial",
+        },
     },
-    "CRTMPCONSULTA1":{
-        "usecols":["CORREO","FECHA_FACT","TIPO_DOCUM","NUMERO_DOC","IDENTIFICA","NOMBRE_PRO","TOTVENTA","CANTIDAD"],
-        "rename_map":{ 
-                      "CORREO": "Correo", 
-                      "FECHA_FACT":"Fecha_Facturada", 
-                      "TIPO_DOCUM":"Tipo_Credito", 
-                      "NUMERO_DOC":"Numero_Credito", 
-                      "IDENTIFICA":"Cedula_Cliente",
-                      "NOMBRE_PRO":"Nombre_Producto",
-                      "TOTVENTA":"Total_Venta",
-                      "CANTIDAD": "Cantidad_Item" }
+    "CRTMPCONSULTA1": {
+        "usecols": [
+            "CORREO",
+            "FECHA_FACT",
+            "TIPO_DOCUM",
+            "NUMERO_DOC",
+            "IDENTIFICA",
+            "NOMBRE_PRO",
+            "TOTVENTA",
+            "CANTIDAD",
+        ],
+        "rename_map": {
+            "CORREO": "Correo",
+            "FECHA_FACT": "Fecha_Facturada",
+            "TIPO_DOCUM": "Tipo_Credito",
+            "NUMERO_DOC": "Numero_Credito",
+            "IDENTIFICA": "Cedula_Cliente",
+            "NOMBRE_PRO": "Nombre_Producto",
+            "TOTVENTA": "Total_Venta",
+            "CANTIDAD": "Cantidad_Item",
+        },
     },
-    "FNZ003":{
-        "usecols":["CONCEPTO","SALDO","DESEMBOLSO", "NUMERO"],
-        "rename_map":{ 
-                      "DESEMBOLSO":"Tipo_Credito",
-                      "NUMERO": "Numero_Credito",  
-                      "CONCEPTO":"Concepto", 
-                      "SALDO":"Saldo" }
+    "FNZ003": {
+        "usecols": ["CONCEPTO", "SALDO", "DESEMBOLSO", "NUMERO"],
+        "rename_map": {
+            "DESEMBOLSO": "Tipo_Credito",
+            "NUMERO": "Numero_Credito",
+            "CONCEPTO": "Concepto",
+            "SALDO": "Saldo",
+        },
     },
     "MATRIZ_CARTERA": {
-         "usecols":["CREDITO","ZONA","NOMBRE","COBRADOR","GESTOR","TELEFONO GESTOR",
-                    "REGIONAL","CALL CENTER ASIGNADO", "NOMBRE CC","TELEFONO"],
-        "rename_map":{ 
-                      "CREDITO":"Credito",
-                      "ZONA": "Zona",
-                      "NOMBRE":"Cobrador",
-                      "COBRADOR":"Telefono_Cobrador",
-                      "GESTOR":"Gestor",
-                      "TELEFONO GESTOR":"Telefono_Gestor",
-                      "REGIONAL":"Regional_Cobro",  
-                      "CALL CENTER ASIGNADO":"Call_Center_Apoyo", 
-                      "NOMBRE CC":"Nombre_Call_Center",
-                      "TELEFONO":"Telefono_Call_Center"}                           
+        "usecols": [
+            "CREDITO",
+            "ZONA",
+            "NOMBRE",
+            "COBRADOR",
+            "GESTOR",
+            "TELEFONO GESTOR",
+            "REGIONAL",
+            "CALL CENTER ASIGNADO",
+            "NOMBRE CC",
+            "TELEFONO",
+        ],
+        "rename_map": {
+            "CREDITO": "Credito",
+            "ZONA": "Zona",
+            "NOMBRE": "Cobrador",
+            "COBRADOR": "Telefono_Cobrador",
+            "GESTOR": "Gestor",
+            "TELEFONO GESTOR": "Telefono_Gestor",
+            "REGIONAL": "Regional_Cobro",
+            "CALL CENTER ASIGNADO": "Call_Center_Apoyo",
+            "NOMBRE CC": "Nombre_Call_Center",
+            "TELEFONO": "Telefono_Call_Center",
+        },
     },
-    "METAS_FRANJAS":{
-        "usecols":["ZONA","1 A 30","31 A 90","91 A 180","181 A 360","T.R"],
-        "rename_map":{ "ZONA":"Zona", 
-                      "1 A 30":"Meta_1_A_30", 
-                      "31 A 90":"Meta_31_A_90",
-                      "91 A 180":"Meta_91_A_180",
-                      "181 A 360":"Meta_181_A_360",
-                      "T.R":"Total_Recaudo" }
+    "METAS_FRANJAS": {
+        "usecols": ["ZONA", "1 A 30", "31 A 90", "91 A 180", "181 A 360", "T.R"],
+        "rename_map": {
+            "ZONA": "Zona",
+            "1 A 30": "Meta_1_A_30",
+            "31 A 90": "Meta_31_A_90",
+            "91 A 180": "Meta_91_A_180",
+            "181 A 360": "Meta_181_A_360",
+            "T.R": "Total_Recaudo",
+        },
     },
-     
     "ASESORES": {
         "sheets": [
             {
-                "sheet_name": "ASESORES",                                
+                "sheet_name": "ASESORES",
                 "usecols": [
-                    "LIDER ZONA", "JEFE VENTAS",  "TIPO_ASESOR", "CC ASESOR",
-                    "CODIGO_ASESOR", "SEDE", "ZONA"
-                    ],
-                "rename_map": { 
+                    "LIDER ZONA",
+                    "JEFE VENTAS",
+                    "TIPO_ASESOR",
+                    "CC ASESOR",
+                    "CODIGO_ASESOR",
+                    "SEDE",
+                    "ZONA",
+                ],
+                "rename_map": {
                     "CODIGO_ASESOR": "Codigo_Vendedor",
                     "LIDER ZONA": "Lider_Zona",
                     "JEFE VENTAS": "Jefe_ventas",
                     "SEDE": "Sede_Vendedor",
-                    "ZONA": "Zona_Venta",  
+                    "ZONA": "Zona_Venta",
                     "CC ASESOR": "Cedula_Vendedor",
                     "TIPO_ASESOR": "Tipo_Asesor",
                 },
-                "merge_on": "Codigo_Vendedor"
+                "merge_on": "Codigo_Vendedor",
             },
-            {   
+            {
                 "sheet_name": "Centro Costos",
-                "usecols": [
-                    "CENTRO DE COSTOS", "REGIONAL"
-                    ], 
-                "rename_map": { 
+                "usecols": ["CENTRO DE COSTOS", "REGIONAL"],
+                "rename_map": {
                     "CENTRO DE COSTOS": "Codigo_Centro_Costos",
-                    "REGIONAL": "Regional_Venta"
+                    "REGIONAL": "Regional_Venta",
                 },
-                "merge_on": "Codigo_Centro_Costos"
-            }
+                "merge_on": "Codigo_Centro_Costos",
+            },
         ]
-    }, 
-     
-     "FNZ001":{
-        "usecols":["DSM_TP","VLR_FNZ","VLR_CUOTA", "DSM_NUM","CUOTAS"],
-        "rename_map":{ 
-                      "DSM_TP":"Tipo_Credito",
-                      "DSM_NUM": "Numero_Credito",  
-                      "VLR_CUOTA":"Valor_Cuota",
-                      "CUOTAS":"Total_Cuotas", 
-                      "VLR_FNZ":"Valor_Desembolso" }
-    }
+    },
+    "FNZ001": {
+        "usecols": ["DSM_TP", "VLR_FNZ", "VLR_CUOTA", "DSM_NUM", "CUOTAS"],
+        "rename_map": {
+            "DSM_TP": "Tipo_Credito",
+            "DSM_NUM": "Numero_Credito",
+            "VLR_CUOTA": "Valor_Cuota",
+            "CUOTAS": "Total_Cuotas",
+            "VLR_FNZ": "Valor_Desembolso",
+        },
+    },
 }
 
 ORDEN_COLUMNAS_FINAL = [
     # --- Identificadores Principales ---
-    'Empresa',
-    'Credito',
-    'Fecha_Desembolso',
-    'Factura_Venta',
-    'Fecha_Facturada',
-    'Nombre_Producto',
-    'Cantidad_Producto',
-    'Obsequio',
-    'Cantidad_Obsequio',
-    'Cantidad_Total_Producto',
-    'Cedula_Cliente',
-    'Nombre_Cliente',
-    'Correo',
-    'Celular',
-    'Direccion',
-    'Barrio',
-    'Nombre_Ciudad',
-    'Zona',
-    'Cobrador',
-    'Telefono_Cobrador',
-    'Zona_Cobro',
-    'Call_Center_Apoyo',
-    'Nombre_Call_Center',
-    'Telefono_Call_Center',
-    'Regional_Cobro',
-    'Gestor',
-    'Telefono_Gestor',
-    'Jefe_ventas',
-    'Codigo_Vendedor',
-    'Cedula_Vendedor',
-    'Nombre_Vendedor',
-    'Vendedor_Activo',
-    'Sede_Vendedor',
-    'Zona_Venta',
-    'Tipo_Asesor',
-    'Lider_Zona',
-    'Codigo_Centro_Costos',
-    'Regional_Venta',
-    'Codeudor1',
-    'Nombre_Codeudor1',
-    'Telefono_Codeudor1',
-    'Ciudad_Codeudor1',
-    'Codeudor2',
-    'Nombre_Codeudor2',
-    'Telefono_Codeudor2',
-    'Ciudad_Codeudor2',
-    'Valor_Desembolso',
-    'Total_Cuotas',
-    'Valor_Cuota',
-    'Dias_Atraso',
-    'Franja_Meta',
-    'Franja_Cartera',
-    'Saldo_Capital',
-    'Saldo_Interes_Corriente',
-    'Saldo_Avales',
-    'Meta_Intereses',
-    'Meta_General',
-    'Meta_Saldo',
-    'Meta_%',
-    'Meta_$',
-    'Meta_T.R_%',
-    'Meta_T.R_$',
-    'Cuotas_Pagadas',
-    'Cuota_Vigente',
-    'Fecha_Cuota_Vigente',
-    'Valor_Cuota_Vigente',
-    'Fecha_Cuota_Atraso',
-    'Primera_Cuota_Mora',
-    'Fecha_Ultimo_Pago_Inicial',
-    'Rango_Ultimo_pago_Inicial',
-    'Valor_Cuota_Atraso',      
-    'Valor_Vencido'
+    "Empresa",
+    "Credito",
+    "Fecha_Desembolso",
+    "Factura_Venta",
+    "Fecha_Facturada",
+    "Nombre_Producto",
+    "Cantidad_Producto",
+    "Obsequio",
+    "Cantidad_Obsequio",
+    "Cantidad_Total_Producto",
+    "Cedula_Cliente",
+    "Nombre_Cliente",
+    "Correo",
+    "Celular",
+    "Direccion",
+    "Barrio",
+    "Nombre_Ciudad",
+    "Zona",
+    "Cobrador",
+    "Telefono_Cobrador",
+    "Zona_Cobro",
+    "Call_Center_Apoyo",
+    "Nombre_Call_Center",
+    "Telefono_Call_Center",
+    "Regional_Cobro",
+    "Gestor",
+    "Telefono_Gestor",
+    "Jefe_ventas",
+    "Codigo_Vendedor",
+    "Cedula_Vendedor",
+    "Nombre_Vendedor",
+    "Vendedor_Activo",
+    "Sede_Vendedor",
+    "Zona_Venta",
+    "Tipo_Asesor",
+    "Lider_Zona",
+    "Codigo_Centro_Costos",
+    "Regional_Venta",
+    "Codeudor1",
+    "Nombre_Codeudor1",
+    "Telefono_Codeudor1",
+    "Ciudad_Codeudor1",
+    "Codeudor2",
+    "Nombre_Codeudor2",
+    "Telefono_Codeudor2",
+    "Ciudad_Codeudor2",
+    "Valor_Desembolso",
+    "Total_Cuotas",
+    "Valor_Cuota",
+    "Dias_Atraso",
+    "Franja_Meta",
+    "Franja_Cartera",
+    "Saldo_Capital",
+    "Saldo_Interes_Corriente",
+    "Saldo_Avales",
+    "Meta_Intereses",
+    "Meta_General",
+    "Meta_Saldo",
+    "Meta_%",
+    "Meta_$",
+    "Meta_T.R_%",
+    "Meta_T.R_$",
+    "Cuotas_Pagadas",
+    "Cuota_Vigente",
+    "Fecha_Cuota_Vigente",
+    "Valor_Cuota_Vigente",
+    "Fecha_Cuota_Atraso",
+    "Primera_Cuota_Mora",
+    "Fecha_Ultimo_Pago_Inicial",
+    "Rango_Ultimo_pago_Inicial",
+    "Valor_Cuota_Atraso",
+    "Valor_Vencido",
 ]
