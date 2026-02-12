@@ -409,3 +409,60 @@ class UpdateBaseService:
         print(f"   ✅ Pipeline completo aplicado a {len(reporte_df)} créditos.")
 
         return reporte_df, negativos
+
+    def _preservar_datos_estaticos(
+        self,
+        df_base_anterior: pd.DataFrame,
+        ids_intactos: set[str],
+    ) -> pd.DataFrame:
+        """Extracts intact credits from the previous base, preserving non-volatile data.
+
+        For credits that haven't changed structurally (same Zona, Vendedor,
+        Zona_Cobro), we skip the full processing pipeline and instead copy
+        their rows directly from the previous report. This preserves:
+
+        - COLUMNAS_ESTATICAS: loan details that never change (desembolso, factura, etc.)
+        - COLUMNAS_MAESTROS: client data that rarely changes (nombre, cédula, etc.)
+        - COLUMNAS_ORGANIZACION: zone/seller data (unchanged since we already
+          classified structural changes as 'modificados')
+
+        Volatile columns (saldos, mora, metas) are NOT included here — they'll
+        be updated separately in Paso 4 (_actualizar_columnas_volatiles).
+
+        Args:
+            df_base_anterior: Previous month's complete report.
+            ids_intactos: Set of credit IDs classified as unchanged.
+
+        Returns:
+            DataFrame with intact credits and all non-volatile columns preserved.
+            Returns empty DataFrame if ids_intactos is empty.
+        """
+        if not ids_intactos:
+            print("\n[LOG] No hay créditos intactos para preservar.")
+            return pd.DataFrame()
+
+        # --- Step 1: Filter base anterior to only intact credits ---
+        ids_list = list(ids_intactos)
+        mask = df_base_anterior["Credito"].isin(ids_list)
+        df_intactos = df_base_anterior.loc[mask].copy()
+
+        if df_intactos.empty:
+            print(
+                "⚠️ ids_intactos no vacío pero no se encontraron coincidencias en base anterior."
+            )
+            return pd.DataFrame()
+
+        # --- Step 2: Determine which columns to preserve ---
+        # Everything EXCEPT volatile columns — those will be updated in Paso 4
+        columnas_a_preservar = [
+            col for col in df_intactos.columns if col not in COLUMNAS_VOLATILES
+        ]
+
+        df_resultado = df_intactos[columnas_a_preservar].copy()
+
+        print(
+            f"\n[LOG] Preservados {len(df_resultado)} créditos intactos "
+            f"({len(columnas_a_preservar)} columnas no-volátiles copiadas)."
+        )
+
+        return df_resultado
