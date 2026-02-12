@@ -3,6 +3,7 @@
 entorno/
 venv/
 .env
+.venv
 
 # Archivos de Python generados
 __pycache__/
@@ -13,6 +14,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ipynb_checkpoints/
+__pycache__/
 
 # Archivos de IDE
 .vscode/

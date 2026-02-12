@@ -297,3 +297,115 @@ class UpdateBaseService:
             modificados=modificados,
             intactos=intactos,
         )
+
+    def _procesar_creditos_nuevos_y_modificados(
+        self,
+        df_r91_nuevo: pd.DataFrame,
+        ids_a_procesar: set[str],
+        dataframes_nuevos: dict,
+        df_base_anterior: pd.DataFrame,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Runs the full processing pipeline for new and modified credits only.
+
+        Filters the R91 to only include credits in ids_a_procesar, then
+        executes the same consolidation + transformation pipeline that
+        sincronizar_reporte uses today. This is the EXACT same logic,
+        just applied to a subset of credits.
+
+        Both NEW and MODIFIED credits get identical treatment because:
+        - New credits have no prior data → need full processing.
+        - Modified credits had structural changes (Zona/Vendedor) →
+          cascading effects on MATRIZ_CARTERA, ASESORES, etc. make it
+          safer to re-process from scratch than to patch.
+
+        Args:
+            df_r91_nuevo: Full R91 DataFrame with 'Credito' column created.
+            ids_a_procesar: Set of credit IDs (nuevos ∪ modificados).
+            dataframes_nuevos: Dict of all new source DataFrames by type.
+            df_base_anterior: Previous month's complete report.
+
+        Returns:
+            Tuple of (processed DataFrame, negativos DataFrame).
+        """
+        if not ids_a_procesar:
+            print("\n[LOG] No hay créditos nuevos ni modificados para procesar.")
+            return pd.DataFrame(), pd.DataFrame()
+
+        # --- Step 1: Filter R91 to only credits that need full processing ---
+        ids_list = list(ids_a_procesar)
+        mask = df_r91_nuevo["Credito"].isin(ids_list)
+        esqueleto_df = df_r91_nuevo.loc[mask].copy()
+
+        print(
+            f"\n[LOG] Procesando {len(esqueleto_df)} créditos (nuevos + modificados)..."
+        )
+
+        # --- Step 2: Consolidate each data source (same logic as sincronizar_reporte) ---
+        for tipo, config in configuracion.items():
+            if tipo == "R91":
+                continue
+
+            join_keys = ["Credito", "Cedula_Cliente"]
+
+            if tipo in ["MATRIZ_CARTERA", "METAS_FRANJAS"]:
+                join_keys = ["Zona"]
+            elif tipo in ["ASESORES", "SC04"]:
+                continue
+
+            columnas_del_tipo = list(config.get("rename_map", {}).values())
+            if not columnas_del_tipo:
+                continue
+
+            keys_to_add = join_keys if isinstance(join_keys, list) else [join_keys]
+            for key in keys_to_add:
+                if key not in columnas_del_tipo:
+                    columnas_del_tipo.append(key)
+
+            df_nuevos_datos = self.data_loader.safe_concat(
+                dataframes_nuevos.get(tipo, [])
+            )
+
+            columnas_existentes_en_anterior = [
+                col for col in columnas_del_tipo if col in df_base_anterior.columns
+            ]
+            df_datos_viejos = df_base_anterior[columnas_existentes_en_anterior].copy()
+
+            df_consolidado = pd.DataFrame()
+
+            if not df_nuevos_datos.empty:
+                if "Credito" not in df_nuevos_datos.columns and "Credito" in join_keys:
+                    df_nuevos_datos = self.data_loader.create_credit_key(
+                        df_nuevos_datos
+                    )
+
+                df_combinado = pd.concat(
+                    [df_nuevos_datos, df_datos_viejos], ignore_index=True
+                )
+                df_consolidado = df_combinado.drop_duplicates(
+                    subset=join_keys, keep="first"
+                )
+            elif not df_datos_viejos.empty:
+                df_consolidado = df_datos_viejos.drop_duplicates(
+                    subset=join_keys, keep="first"
+                )
+
+            if df_consolidado.empty:
+                continue
+
+            esqueleto_df = pd.merge(
+                esqueleto_df,
+                df_consolidado,
+                on=join_keys,
+                how="left",
+                suffixes=("", f"_{tipo}_dup"),
+            )
+
+        # --- Step 3: Apply transformations (same pipeline as full processing) ---
+        reporte_df = esqueleto_df.copy()
+        reporte_df, negativos, _ = self._aplicar_transformaciones(
+            reporte_df, dataframes_nuevos
+        )
+
+        print(f"   ✅ Pipeline completo aplicado a {len(reporte_df)} créditos.")
+
+        return reporte_df, negativos
