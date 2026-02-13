@@ -25,99 +25,75 @@ class UpdateBaseService:
         self.data_loader = report_service.data_loader
 
     def sincronizar_reporte(self, df_base_anterior, dataframes_nuevos):
-        print("🚀 Iniciando modo de actualización con enfoque híbrido...")
+        """Orchestrates the incremental update of the base report.
 
-        # --- PASO 1: Usar R91 como el esqueleto INTOCABLE ---
+        Instead of re-processing ALL credits through the full pipeline,
+        this method detects what changed and only processes the minimum:
+
+        1. Detect: classify credits into new/modified/eliminated/intact
+        2. Process: run full pipeline ONLY for new + modified credits
+        3. Preserve: copy static data for intact credits
+        4. Update: refresh volatile columns for intact credits
+        5. Combine: pd.concat processed + intact, then finalize
+
+        This dramatically reduces processing time when most credits
+        haven't changed structurally (typical month-to-month scenario).
+        """
+        print("🚀 Iniciando modo de actualización INCREMENTAL...")
+
+        # --- Prepare R91 (source of truth) ---
         df_r91_nuevo = self.data_loader.safe_concat(dataframes_nuevos.get("R91", []))
         if df_r91_nuevo.empty:
             raise ValueError("El archivo R91 es obligatorio para la actualización.")
 
-        esqueleto_df = self.data_loader.create_credit_key(df_r91_nuevo)
+        df_r91_nuevo = self.data_loader.create_credit_key(df_r91_nuevo)
+        print(f"\n[LOG] R91 cargado con {len(df_r91_nuevo)} registros.")
+
+        # --- Ensure base anterior has Credito column ---
+        if "Credito" not in df_base_anterior.columns:
+            df_base_anterior = self.data_loader.create_credit_key(df_base_anterior)
+
+        # --- STEP 1: Detect what changed ---
+        deteccion = self._detectar_creditos_modificados(df_r91_nuevo, df_base_anterior)
+
+        # --- STEP 2: Full pipeline for new + modified credits ---
+        ids_a_procesar = deteccion["nuevos"] | deteccion["modificados"]
+        df_procesados, negativos_procesados = (
+            self._procesar_creditos_nuevos_y_modificados(
+                df_r91_nuevo, ids_a_procesar, dataframes_nuevos, df_base_anterior
+            )
+        )
+
+        # --- STEP 3 + 4: Preserve statics + update volatiles for intact ---
+        df_intactos_estaticos = self._preservar_datos_estaticos(
+            df_base_anterior, deteccion["intactos"]
+        )
+        df_intactos_final, negativos_intactos = self._actualizar_columnas_volatiles(
+            df_intactos_estaticos, df_r91_nuevo, dataframes_nuevos, df_base_anterior
+        )
+
+        # --- STEP 5: Combine results ---
+        partes = [df for df in [df_procesados, df_intactos_final] if not df.empty]
+        if not partes:
+            raise ValueError("No se generaron registros para el reporte.")
+
+        reporte_df = pd.concat(partes, ignore_index=True)
+
+        negativos_partes = [
+            df for df in [negativos_procesados, negativos_intactos] if not df.empty
+        ]
+        negativos_finales = (
+            pd.concat(negativos_partes, ignore_index=True)
+            if negativos_partes
+            else pd.DataFrame()
+        )
+
         print(
-            f"\n[LOG] Esqueleto creado a partir de R91 con {len(esqueleto_df)} registros."
+            f"\n[LOG] Reporte combinado: {len(reporte_df)} registros "
+            f"({len(df_procesados)} procesados + {len(df_intactos_final)} intactos)."
         )
 
-        # --- PASO 2: Consolidar y unir cada fuente de datos ---
-        for tipo, config in configuracion.items():
-            if tipo == "R91":
-                continue
-
-            # --- INICIO DE LA CORRECCIÓN ---
-            # 1. Establecemos la llave por defecto al inicio de CADA vuelta del bucle.
-            join_keys = ["Credito", "Cedula_Cliente"]
-
-            # 2. El 'if' ahora solo SOBREESCRIBE el valor por defecto en casos especiales.
-            if tipo in ["MATRIZ_CARTERA", "METAS_FRANJAS"]:
-                join_keys = ["Zona"]
-            elif tipo in ["ASESORES", "SC04"]:
-                # Simplificamos la omisión de casos especiales
-                print(
-                    f"   - Omitiendo '{tipo}' en la consolidación inicial (se procesará después)."
-                )
-                continue
-            # --- FIN DE LA CORRECCIÓN ---
-
-            columnas_del_tipo = list(config.get("rename_map", {}).values())
-            if not columnas_del_tipo:
-                continue
-
-            # Ahora 'join_keys' siempre existirá en este punto.
-            keys_to_add = join_keys if isinstance(join_keys, list) else [join_keys]
-            for key in keys_to_add:
-                if key not in columnas_del_tipo:
-                    columnas_del_tipo.append(key)
-
-            df_nuevos_datos = self.data_loader.safe_concat(
-                dataframes_nuevos.get(tipo, [])
-            )
-
-            columnas_existentes_en_anterior = [
-                col for col in columnas_del_tipo if col in df_base_anterior.columns
-            ]
-            df_datos_viejos = df_base_anterior[columnas_existentes_en_anterior].copy()
-
-            df_consolidado = pd.DataFrame()
-
-            if not df_nuevos_datos.empty:
-                if "Credito" not in df_nuevos_datos.columns and "Credito" in join_keys:
-                    df_nuevos_datos = self.data_loader.create_credit_key(
-                        df_nuevos_datos
-                    )
-
-                df_combinado = pd.concat(
-                    [df_nuevos_datos, df_datos_viejos], ignore_index=True
-                )
-                df_consolidado = df_combinado.drop_duplicates(
-                    subset=join_keys, keep="first"
-                )
-            elif not df_datos_viejos.empty:
-                df_consolidado = df_datos_viejos.drop_duplicates(
-                    subset=join_keys, keep="first"
-                )
-
-            if df_consolidado.empty:
-                continue
-
-            print(
-                f"   - Consolidando y uniendo datos de '{tipo}' usando la llave: {join_keys}..."
-            )
-
-            esqueleto_df = pd.merge(
-                esqueleto_df,
-                df_consolidado,
-                on=join_keys,
-                how="left",
-                suffixes=("", f"_{tipo}_dup"),
-            )
-
-        print("\n[LOG] Todas las fuentes de datos han sido unidas al esqueleto.")
-        reporte_df = esqueleto_df.copy()
-
-        # --- PASO 3: (Sin cambios) Reutilizar las funciones de transformación ---
-        print("\n[LOG] Aplicando transformaciones y cálculos finales...")
-        reporte_df, negativos_finales, _ = self._aplicar_transformaciones(
-            reporte_df, dataframes_nuevos
-        )
+        # --- STEP 6: Finalize (formatting, column ordering, audit) ---
         reporte_final, reporte_correcciones = (
             self.report_service.report_processor.finalize_report(
                 reporte_df, ORDEN_COLUMNAS_FINAL
@@ -125,7 +101,8 @@ class UpdateBaseService:
         )
 
         print(
-            f"\n✅ Proceso de sincronización completado. Registros finales: {len(reporte_final)}"
+            f"\n✅ Actualización incremental completada. "
+            f"Registros finales: {len(reporte_final)}"
         )
         return reporte_final, negativos_finales, reporte_correcciones
 
@@ -466,3 +443,147 @@ class UpdateBaseService:
         )
 
         return df_resultado
+
+    def _actualizar_columnas_volatiles(
+        self,
+        df_intactos: pd.DataFrame,
+        df_r91_nuevo: pd.DataFrame,
+        dataframes_nuevos: dict,
+        df_base_anterior: pd.DataFrame,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Updates volatile columns for intact credits using new data sources.
+
+        Takes the output of _preservar_datos_estaticos (intact credits with
+        static/master/org columns only) and adds back volatile data from
+        new sources: R91 metas, ANALISIS (mora), and lets _aplicar_transformaciones
+        handle VENCIMIENTOS, FNZ003, and all calculated columns.
+
+        The key insight is that we DON'T duplicate calculation logic here.
+        Instead, we:
+        1. Merge R91 metas directly (they're in the new R91)
+        2. Consolidate ONLY ANALISIS data (new + fallback to previous)
+        3. Run _aplicar_transformaciones which handles FNZ003, VENCIMIENTOS,
+           and all derived calculations (Meta_General, Franjas, etc.)
+
+        This is the SAME pipeline as full processing, just applied to intact
+        credits with their static data already preserved from Paso 3.
+
+        Args:
+            df_intactos: Output from _preservar_datos_estaticos (no volatile cols).
+            df_r91_nuevo: Full R91 DataFrame with 'Credito' column created.
+            dataframes_nuevos: Dict of all new source DataFrames by type.
+            df_base_anterior: Previous month's complete report.
+
+        Returns:
+            Tuple of (updated DataFrame with volatile cols, negativos DataFrame).
+        """
+        if df_intactos.empty:
+            print(
+                "\n[LOG] No hay créditos intactos para actualizar columnas volátiles."
+            )
+            return pd.DataFrame(), pd.DataFrame()
+
+        ids_intactos = set(df_intactos["Credito"].dropna().unique())
+        ids_list = list(ids_intactos)
+
+        # --- Step 1: Merge R91 metas for intact credits ---
+        # The new R91 has the current month's metas (Meta_Intereses, etc.)
+        columnas_metas_r91 = [
+            "Credito",
+            "Meta_Intereses",
+            "Meta_DC_Al_Dia",
+            "Meta_DC_Atraso",
+            "Meta_Atraso",
+            "Meta_Saldo",
+        ]
+        cols_disponibles = [c for c in columnas_metas_r91 if c in df_r91_nuevo.columns]
+
+        mask_r91 = df_r91_nuevo["Credito"].isin(ids_list)
+        df_metas = df_r91_nuevo.loc[mask_r91, cols_disponibles].drop_duplicates(
+            subset=["Credito"], keep="first"
+        )
+
+        df_resultado = pd.merge(
+            df_intactos,
+            df_metas,
+            on="Credito",
+            how="left",
+            suffixes=("", "_r91_dup"),
+        )
+
+        print(f"\n[LOG] Metas R91 unidas a {len(df_resultado)} créditos intactos.")
+
+        # --- Step 2: Consolidate ANALISIS data (volatile: Dias_Atraso, etc.) ---
+        # ANALISIS provides: Dias_Atraso, Cuotas_Pagadas, Saldo_Factura,
+        # Fecha_Ultimo_Pago_Inicial (plus Direccion, Barrio, Nombre_Ciudad
+        # which are already preserved in static data)
+        config_analisis = configuracion.get("ANALISIS", {})
+        columnas_analisis = list(config_analisis.get("rename_map", {}).values())
+        join_keys_analisis = ["Credito", "Cedula_Cliente"]
+
+        for key in join_keys_analisis:
+            if key not in columnas_analisis:
+                columnas_analisis.append(key)
+
+        df_analisis_nuevo = self.data_loader.safe_concat(
+            dataframes_nuevos.get("ANALISIS", [])
+        )
+
+        # Get previous ANALISIS data as fallback
+        cols_anteriores = [
+            col for col in columnas_analisis if col in df_base_anterior.columns
+        ]
+        df_analisis_viejo = df_base_anterior[cols_anteriores].copy()
+
+        df_analisis_consolidado = pd.DataFrame()
+
+        if not df_analisis_nuevo.empty:
+            if "Credito" not in df_analisis_nuevo.columns:
+                df_analisis_nuevo = self.data_loader.create_credit_key(
+                    df_analisis_nuevo
+                )
+            df_combinado = pd.concat(
+                [df_analisis_nuevo, df_analisis_viejo], ignore_index=True
+            )
+            df_analisis_consolidado = df_combinado.drop_duplicates(
+                subset=join_keys_analisis, keep="first"
+            )
+        elif not df_analisis_viejo.empty:
+            df_analisis_consolidado = df_analisis_viejo.drop_duplicates(
+                subset=join_keys_analisis, keep="first"
+            )
+
+        if not df_analisis_consolidado.empty:
+            # Only merge columns that aren't already in df_resultado
+            # (Direccion, Barrio, etc. are already preserved from Paso 3)
+            cols_ya_presentes = set(df_resultado.columns) - {
+                "Credito",
+                "Cedula_Cliente",
+            }
+            cols_a_traer = [
+                c
+                for c in df_analisis_consolidado.columns
+                if c not in cols_ya_presentes or c in join_keys_analisis
+            ]
+            df_analisis_filtrado = df_analisis_consolidado[cols_a_traer]
+
+            df_resultado = pd.merge(
+                df_resultado,
+                df_analisis_filtrado,
+                on=join_keys_analisis,
+                how="left",
+                suffixes=("", "_ANALISIS_dup"),
+            )
+
+        # --- Step 3: Run the full transformation pipeline ---
+        # This handles: VENCIMIENTOS merge, FNZ003 balances, goal metrics,
+        # franjas, arrears status, and ALL calculated volatile columns.
+        df_resultado, negativos, _ = self._aplicar_transformaciones(
+            df_resultado, dataframes_nuevos
+        )
+
+        print(
+            f"   ✅ Columnas volátiles actualizadas para {len(df_resultado)} créditos intactos."
+        )
+
+        return df_resultado, negativos
