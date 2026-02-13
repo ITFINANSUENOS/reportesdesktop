@@ -124,14 +124,37 @@ class UpdateBaseService:
         vencimientos_df = self.data_loader.create_credit_key(
             self.data_loader.safe_concat(dataframes_nuevos.get("VENCIMIENTOS", []))
         )
+        metas_franjas_df = self.data_loader.safe_concat(
+            dataframes_nuevos.get("METAS_FRANJAS", [])
+        )
 
-        _, negativos_vencimientos = (
+        processed_vencimientos, negativos_vencimientos = (
             self.report_service.credit_details.process_vencimientos_data(
                 vencimientos_df
             )
         )
 
+        # Merge processed vencimientos into the report (Fecha_Cuota_Atraso,
+        # Primera_Cuota_Mora, Valor_Cuota_Atraso, Valor_Vencido, etc.)
+        if not processed_vencimientos.empty:
+            # Drop existing vencimiento columns to avoid _dup suffixes on re-merge
+            cols_venc = [
+                c
+                for c in processed_vencimientos.columns
+                if c != "Credito" and c in reporte_df.columns
+            ]
+            if cols_venc:
+                reporte_df = reporte_df.drop(columns=cols_venc, errors="ignore")
+            reporte_df = pd.merge(
+                reporte_df, processed_vencimientos, on="Credito", how="left"
+            )
+
         # Llamadas a los servicios que reutilizamos
+        # Tipo_Credito is dropped by finalize_report, so it may not exist
+        # or may have NaN gaps (e.g. from partial ANALISIS merge).
+        # Always reconstruct it from the Credito key (format "TYPE-NUMBER")
+        # to guarantee Empresa assignment is correct for ALL rows.
+        reporte_df["Tipo_Credito"] = reporte_df["Credito"].str.split("-").str[0]
         reporte_df["Empresa"] = np.where(
             reporte_df["Tipo_Credito"] == "DF", "FINANSUEÑOS", "ARPESOD"
         )
@@ -147,20 +170,48 @@ class UpdateBaseService:
         reporte_df = self.report_service.credit_details.clean_installment_data(
             reporte_df
         )
-        reporte_df = self.report_service.report_processor.map_call_center_data(
+        reporte_df = self.report_service.categorization_service.map_call_center_data(
             reporte_df
         )
         reporte_df, negativos_fnz003 = (
-            self.report_service.report_processor.calculate_balances(
+            self.report_service.metrics_service.calculate_balances(
                 reporte_df, fnz003_df
             )
         )
-        reporte_df = self.report_service.report_processor.calculate_goal_metrics(
-            reporte_df
+        reporte_df = self.report_service.metrics_service.calculate_goal_metrics(
+            reporte_df, metas_franjas_df if not metas_franjas_df.empty else None
         )
         reporte_df = self.report_service.credit_details.adjust_arrears_status(
             reporte_df
         )
+
+        # --- Cleanup: drop intermediate and _dup columns ---
+        # Merges with FNZ003/CRTMP/METAS_FRANJAS can leak intermediate columns
+        # that shouldn't be in the final report. Also drop any _dup suffixed
+        # columns created by our consolidation merges.
+        # Meta_1_A_30..Total_Recaudo are intermediate franja columns used by
+        # calculate_goal_metrics — they're only dropped automatically when
+        # the service itself does the METAS_FRANJAS merge, but if the columns
+        # already exist (e.g. preserved from previous report), the cleanup
+        # is skipped inside the service. We handle it here unconditionally.
+        intermediate_cols = {
+            "Concepto",
+            "Saldo",
+            "Total_Venta",
+            "Cantidad_Item",
+            "Meta_1_A_30",
+            "Meta_31_A_90",
+            "Meta_91_A_180",
+            "Meta_181_A_360",
+            "Total_Recaudo",
+        }
+        cols_to_drop = [
+            col
+            for col in reporte_df.columns
+            if col.endswith("_dup") or col in intermediate_cols
+        ]
+        if cols_to_drop:
+            reporte_df = reporte_df.drop(columns=cols_to_drop, errors="ignore")
 
         negativos_finales = pd.concat(
             [negativos_vencimientos, negativos_fnz003], ignore_index=True
