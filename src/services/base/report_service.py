@@ -163,9 +163,7 @@ class ReportService:
                     print(f"⚠️ Saltando {nombre_hoja}: No tiene configuración 'merge_on'.")
                     continue
 
-                # ---------------------------------------------------------
                 # CASO 1: HOJA PRINCIPAL DE ASESORES
-                # ---------------------------------------------------------
                 if nombre_hoja == "ASESORES":
                     print(f"   ⚡ Aplicando lógica de Vendedor Activo a: {nombre_hoja}")
                     
@@ -219,9 +217,7 @@ class ReportService:
                     if f'{col_merge_config}_Maestro' in reporte_final.columns:
                         reporte_final.drop(f'{col_merge_config}_Maestro', axis=1, inplace=True)
 
-                # ---------------------------------------------------------
                 # CASO 2: OTRAS HOJAS (Centro Costos, etc.)
-                # ---------------------------------------------------------
                 else:
                     print(f"   🔗 Cruzando hoja auxiliar: {nombre_hoja}")
                     
