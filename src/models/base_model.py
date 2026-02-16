@@ -125,16 +125,19 @@ configuracion = {
             {
                 "sheet_name": "ASESORES",                                
                 "usecols": [
-                    "LIDER ZONA", "JEFE VENTAS",  "TIPO_ASESOR", "CC ASESOR",
+                    "LIDER ZONA","MOVIL LIDER","JEFE VENTAS","MOVIL_JEFE", "TIPO_ASESOR","MOVIL ASESOR","CC ASESOR",
                     "CODIGO_ASESOR", "SEDE", "ZONA"
                     ],
                 "rename_map": { 
                     "CODIGO_ASESOR": "Codigo_Vendedor",
                     "LIDER ZONA": "Lider_Zona",
+                    "MOVIL LIDER": "Celular_Lider_Zona",
                     "JEFE VENTAS": "Jefe_ventas",
+                    "MOVIL_JEFE": "Celular_Jefe_Ventas",
                     "SEDE": "Sede_Vendedor",
                     "ZONA": "Zona_Venta",  
                     "CC ASESOR": "Cedula_Vendedor",
+                    "MOVIL ASESOR": "Celular_Vendedor",
                     "TIPO_ASESOR": "Tipo_Asesor",
                 },
                 "merge_on": "Codigo_Vendedor"
@@ -194,14 +197,17 @@ ORDEN_COLUMNAS_FINAL = [
     'Gestor',
     'Telefono_Gestor',
     'Jefe_ventas',
+    'Celular_Jefe_Ventas',
     'Codigo_Vendedor',
     'Cedula_Vendedor',
     'Nombre_Vendedor',
+    'Celular_Vendedor',
     'Vendedor_Activo',
     'Sede_Vendedor',
     'Zona_Venta',
     'Tipo_Asesor',
     'Lider_Zona',
+    'Celular_Lider_Zona',
     'Codigo_Centro_Costos',
     'Regional_Venta',
     'Codeudor1',
