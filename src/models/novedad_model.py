@@ -70,21 +70,23 @@ configuracion = {
               },
             { 
               "sheet_name": "Mensajeria_Call",
-              "usecols": ["Pais", "Numero de telefono", "Estado de respuesta del outbound","Estado", "Mensaje de inicio",
-                          "ID del flujo","Nombre del outbound","Estado del outbound","Primer Mensaje de Agente de Conversacion","Fecha de creacion",
-                          "Labels de Conversacion",], 
+              "usecols": ["SOURCE_FILE", "Phone Number", "Outbound Name","Status","Message Status","Process Status",
+                          "Outbound Response Status","Flow ID","Outbound Name","Process Failure",
+                          "Agent Conversation First Response Message Type",], 
               "rename_map": { 
-                              "Pais": "Codigo_Pais",
-                              "Numero de telefono": "Numero_Telefono",
+                              "SOURCE_FILE":"Fecha_Mensaje",
+                              "Phone Number": "Numero_Telefono",
                               "Estado de respuesta del outbound":"Estado_Respuesta_Saliente",
-                              "Estado":"Estado",
-                              "Estado del outbound":"Estado_Mensaje",
-                              "Mensaje de inicio":"Respuesta_Saliente",
-                              "Nombre del outbound":"Nombre_Saliente",
-                              "Primer Mensaje de Agente de Conversacion":"Primer_Mensaje_Agente",
-                              "Fecha de creacion":"Fecha_Llamada",
-                              "ID del flujo":"Flujo_Truora",
-                              "Labels de Conversacion":"Etiquetas_Conversacion"}
+                              "Outbound Name":"Nombre_Saliente",
+                              "Status":"Estado",
+                              "Message Status":"Estado_Mensaje",
+                              "Process Status":"Estado_Proceso",
+                              "Outbound Response Status":"Estado_Respuesta_Entrante",
+                              "Flow ID":"Flujo_Truora",
+                              "Outbound Name":"Nombre_Saliente",
+                              "Process Failure":"Fallo_Proceso",
+                              "Agent Conversation First Response Message Type":"Tipo_Respuesta_Agente",
+                              }
               }
         ]   
     },
