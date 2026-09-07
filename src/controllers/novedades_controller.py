@@ -3,6 +3,10 @@ from tkinter import filedialog, messagebox
 import numpy as np
 import pandas as pd
 from pathlib import Path
+
+# MOTIVO (hilos): este proceso es largo; se ejecuta en un hilo del TaskRunner
+# para no congelar la UI (los diálogos/messagebox se canalizan al hilo principal).
+from src.utils.task_runner import threaded
 from src.services.novedades.novedades_service import NovedadesService
 from src.services.novedades.analisis_service import AnalisisService
 from src.services.novedades.recaudo_service import RecaudoR91Service 
@@ -15,7 +19,9 @@ from src.models.novedad_model import configuracion
 class NovedadesAnalisisController:
     def __init__(self):
         self.view = None
-        self.cache_path = Path(__file__).resolve().parent.parent.parent / "cache" / "reporte_base_mensual.feather"
+        # MOTIVO: se eliminó el atributo 'cache_path' (apuntaba a un .feather que
+        # nunca se usó y que en un .exe apuntaría a una carpeta efímera o de solo
+        # lectura).
 
     def set_view(self, view):
         """Asigna la vista a este controlador."""
@@ -153,12 +159,25 @@ class NovedadesAnalisisController:
                     start_row = row_idx
                     current_zone_value = next_zone_value
 
+    def _report_progress(self, percent):
+        """Envía el avance a la barra única del pie de la ventana.
+
+        MOTIVO (progreso global): Novedades solo reportaba con prints; ahora cada
+        fase grande mueve la barra única (la vista ya conoce el MainWindow).
+        """
+        view = getattr(self, "view", None)
+        mw = getattr(view, "main_window", None) if view is not None else None
+        if mw is not None:
+            mw.update_progress(percent)
+
+    @threaded("novedades")
     def procesar_archivos(self, rutas_novedades, ruta_base, rutas_analisis, rutas_r91, ruta_usuarios,
                           rutas_call_center, calcular_nomina, ruta_nomina):
         """
         Orquesta todo el proceso: carga el caché, aplica novedades, calcula el rodamiento
         y guarda un reporte multi-hoja.
         """
+        self._report_progress(0)
         datos_nomina = None
         if calcular_nomina:
             if not ruta_nomina:
@@ -180,6 +199,7 @@ class NovedadesAnalisisController:
             
         try:
             # --- PASO 3: Cargar y procesar los archivos base ---
+            self._report_progress(10)
             print(f"🔄 Cargando reporte base desde: {ruta_base}")
             df_base = self._cargar_reporte_base(ruta_base, configuracion)
             
@@ -220,6 +240,7 @@ class NovedadesAnalisisController:
             # --- PASO 5: Ejecutar los servicios de procesamiento ---
             
             # Aplicar Novedades
+            self._report_progress(40)
             novedades_service = NovedadesService(configuracion)
             df_base_enriquecido, df_novedades_detallado = novedades_service.aplicar_novedades(df_base, df_novedades_unido)
             
@@ -299,6 +320,7 @@ class NovedadesAnalisisController:
             df_novedades_detallado = df_novedades_detallado[[col for col in orden_columnas_detalle if col in df_novedades_detallado.columns]]
             
             # Generar reporte de Franjas
+            self._report_progress(70)
             franjas_service = ReporteFranjasService()
             df_reporte_franjas = franjas_service.generar_reporte(df_final)
 
@@ -316,6 +338,7 @@ class NovedadesAnalisisController:
             df_reporte_mensajes = call_center_service.generar_reporte_mensajes(rutas_call_center, configuracion)
 
             # --- PASO 8: Guardar el archivo Excel de salida ---
+            self._report_progress(90)
             ruta_salida = filedialog.asksaveasfilename(
                 defaultextension=".xlsx",
                 initialfile="Reporte_General.xlsx",
@@ -342,7 +365,9 @@ class NovedadesAnalisisController:
                     df_reporte_mensajes.to_excel(writer, sheet_name='Reporte_Mensajes', index=False)    
 
             print("✅ Reporte final con formato guardado exitosamente.")
+            self._report_progress(100)
             messagebox.showinfo("Éxito", f"Reporte unificado guardado exitosamente en:\n{ruta_salida}")
 
         except Exception as e:
+            self._report_progress(0)
             messagebox.showerror("Error en el Proceso", f"Ocurrió un error general:\n{e}")

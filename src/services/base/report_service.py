@@ -268,9 +268,9 @@ class ReportService:
         reporte_final, negativos_fnz003 = self.metrics_service.calculate_balances(reporte_final, fnz003_df)
         reporte_final = self.metrics_service.calculate_goal_metrics(reporte_final, metas_franjas_df)
         reporte_final = self.credit_details.adjust_arrears_status(reporte_final)
+        reporte_final = self.cleaning_service.run_cleaning_pipeline(reporte_final)
         reporte_final = self.report_processor.filter_by_date_range(reporte_final, start_date, end_date)
         reporte_final, df_a_corregir = self.report_processor.finalize_report(reporte_final, orden_columnas)
-        reporte_final = self.cleaning_service.run_cleaning_pipeline(reporte_final)
         
         reporte_negativos_final = pd.DataFrame() 
         lista_de_negativos = [df for df in [negativos_vencimientos, negativos_fnz003] if not df.empty]

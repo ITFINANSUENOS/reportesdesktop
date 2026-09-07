@@ -129,29 +129,8 @@ class FinansuenosDataProcessorService:
             self.df.loc[self.df[col] <= 10, col] = 0
         self.df[columnas_numericas] = self.df[columnas_numericas].astype(int)
         
-    def _final_cleanup(self):
-        """
-        Limpia CUALQUIER valor nulo o texto 'nan' restante en todas las
-        columnas no numéricas justo antes de entregar el resultado.
-        """
-        print("  - Realizando limpieza final de valores nulos...")
-        
-        # 1. Define tus columnas numéricas para excluirlas
-        numeric_keys = ['initial_value', 'balance_due', 'available_value', 'monthly_fee', 'arrears_value', 'actual_value_paid']
-        columnas_numericas = [self.map[k] for k in numeric_keys if k in self.map]
-        
-        # 2. Identifica las columnas de texto a limpiar
-        columnas_a_limpiar = self.df.columns.drop(columnas_numericas)
-        
-        # 3. Itera y limpia cada columna de texto de forma robusta
-        for col in columnas_a_limpiar:
-
-            self.df[col] = self.df[col].astype(str).str.strip()
-            self.df[col] = self.df[col].replace(r'(?i)^nan$', '', regex=True).fillna('')    
-            
-
     def _apply_final_formatting(self):
-        print("  - Aplicando formatos finales...")
+        print("  - Aplicando formatos finales...")
         
         col_ciudad = self.map['city']
         self.df[col_ciudad] = self.df[col_ciudad].astype(str).str.strip().str.upper()

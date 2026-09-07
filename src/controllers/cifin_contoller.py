@@ -1,10 +1,16 @@
 from tkinter import messagebox, filedialog
+
+# MOTIVO (hilos): el procesamiento es pesado y no debe congelar la UI; se
+# ejecuta en un hilo del TaskRunner (los diálogos/mensajes van al hilo principal).
+from src.utils.task_runner import threaded
+from src.utils.file_utils import backup_file
 from src.models.cifin_model import CifinModel
-from src.views.cifin_view import CifinView
 from src.services.centrales.finansueños.cifin_service import FinansuenosDataProcessorService
 from src.services.centrales.arpesod.cifin_service import ArpesodDataProcessorService
 
 class CifinController:
+    # MOTIVO: se eliminó el import de CifinView (vista huérfana que nadie abría).
+    # El flujo real de CIFIN ocurre desde la pestaña "Centrales de Riesgo".
     def __init__(self):
         self.model = CifinModel()
         self.view = None
@@ -46,19 +52,22 @@ class CifinController:
         """
         self.view = view    
 
-    def open_cifin_window(self, parent):
-        if self.view is None or not self.view.top.winfo_exists():
-            self.view = CifinView(parent, self)
-            # Llama a grab_set() sobre .top
-            self.view.top.grab_set()
-        else:
-            # Llama a lift() sobre .top
-            self.view.top.lift()
-            
+    def _report_progress(self, percent):
+        """Envía el avance a la barra única del pie (vía la vista de centrales)."""
+        view = getattr(self, "view", None)
+        if view is not None and hasattr(view, "report_progress"):
+            view.report_progress(percent)
+
+    @threaded("cifin")
     def run_processing(self, txt_path, corrections_path):
         """
         Método para procesar los archivos sin necesidad de una vista específica
         """
+        # MOTIVO (seguridad de datos): los servicios de centrales actualizan el
+        # Excel de correcciones en sitio; respaldarlo antes evita pérdidas.
+        backup_file(corrections_path)
+        self._report_progress(5)
+
         try:
             # 1. Cargar archivo plano
             df_cargado = self.model.load_plano_file(txt_path)
@@ -75,7 +84,8 @@ class CifinController:
             
             # 3. Ejecutar transformaciones
             df_transformado = procesador.run_all_transformations()
-            
+            self._report_progress(80)
+
             # 4. Guardar el resultado
             output_path = filedialog.asksaveasfilename(
                 title="Guardar reporte como",
@@ -86,11 +96,14 @@ class CifinController:
             if output_path:
                 self.model.df = df_transformado
                 if self.model.guardar_en_excel(output_path):
+                    self._report_progress(100)
                     messagebox.showinfo("Éxito", f"El reporte ha sido generado en:\n{output_path}")
                 else:
                     raise ValueError("No se pudo guardar el archivo Excel.")
             else:
+                self._report_progress(0)
                 messagebox.showinfo("Información", "Guardado cancelado por el usuario.")
 
         except Exception as e:
+            self._report_progress(0)
             messagebox.showerror("Error en el Proceso", f"Ocurrió un error:\n{e}")

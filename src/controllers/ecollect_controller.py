@@ -1,6 +1,11 @@
 import os
 from tkinter import filedialog
 import pandas as pd
+
+# MOTIVO (hilos): estos procesos son largos y tocan la UI; se ejecutan en un
+# hilo del TaskRunner sin congelar la ventana (los diálogos se canalizan al main).
+from src.utils.task_runner import threaded
+from src.utils.file_utils import backup_file
 from src.services.ecollect.ecollect_service import EcollectService
 from src.services.ecollect.plano_service import PlanoService
 from src.services.ecollect.usuarios_service import UsuariosService
@@ -107,6 +112,9 @@ class EcollectController:
             df_actualizado = pd.concat([df_excel, df_nuevos_para_excel], ignore_index=True)
             
             try:
+                # MOTIVO (seguridad de datos): antes de sobrescribir el maestro,
+                # guardamos una copia .bak del archivo original.
+                backup_file(maestro_excel_path)
                 # Esta lógica de guardar en el maestro original se mantiene
                 df_actualizado.to_excel(maestro_excel_path, index=False)
                 self.view.main_window.update_status(f"Paso 3.6: Maestro Excel actualizado.")
@@ -115,9 +123,22 @@ class EcollectController:
 
         return df_nuevos.drop(columns=['ID_Normalizado']), df_nuevos_para_excel, total_nuevos
     
+    def _report_progress(self, percent):
+        """Envía el avance a la barra única del pie de la ventana.
+
+        MOTIVO (progreso global): Ecollect ya describía cada 'Paso X/Y' como
+        texto; ahora además alimenta la barra única con un porcentaje por paso.
+        """
+        view = getattr(self, "view", None)
+        mw = getattr(view, "main_window", None) if view is not None else None
+        if mw is not None:
+            mw.update_progress(percent)
+
+    @threaded("ecollect_clientes")
     def iniciar_proceso_completo(self):
         """Orquesta la ejecución para CLIENTES con la nueva lógica de guardado."""
         self.view.main_window.update_status("Iniciando proceso Clientes...")
+        self._report_progress(0)
         vencimientos_paths = self.rutas_archivos.get("PROCESO_VENCIMIENTOS")
         consulta_path = self.rutas_archivos.get("PROCESO_CONSULTA")
         maestro_path = self.rutas_archivos.get("PROCESO_MAESTRO_CLIENTES")
@@ -147,6 +168,7 @@ class EcollectController:
         try:
             
             self.view.main_window.update_status("Paso 1/4 (Clientes): Procesando plano de cartera...")
+            self._report_progress(25)
             df_cartera = self.ecollect_service.process_vencimientos(vencimientos_paths)
             if df_cartera is None or df_cartera.empty:
                 self.view.main_window.update_status("Error (Clientes): No se encontraron datos para el plano de cartera.")
@@ -163,6 +185,7 @@ class EcollectController:
             self.view.main_window.update_status(f"Paso 1/4 (Clientes) completado: Plano de cartera guardado.")
 
             self.view.main_window.update_status("Paso 2/4 (Clientes): Cruzando datos de usuarios (TODOS)...")
+            self._report_progress(50)
             df_usuarios_TODOS = self.usuarios_service.crear_dataframe_usuarios(
                 list(vencimientos_paths), consulta_path
             )
@@ -173,6 +196,7 @@ class EcollectController:
             
 
             self.view.main_window.update_status("Paso 3/4 (Clientes): Filtrando clientes nuevos y actualizando maestro...")
+            self._report_progress(70)
             
 
             df_usuarios_NUEVOS, df_excel_NUEVOS, total_nuevos = self._filtrar_y_actualizar_maestro(
@@ -181,12 +205,14 @@ class EcollectController:
             )
             
             if total_nuevos == 0:
+                self._report_progress(100)
                 self.view.main_window.update_status("Proceso Clientes completado. No se encontraron clientes nuevos.")
                 return 
 
 
             
             self.view.main_window.update_status(f"Paso 4.1: Generando Excel de {total_nuevos} clientes nuevos...")
+            self._report_progress(85)
             fecha_hoy_excel = pd.Timestamp.now().strftime('%Y%m%d')
             nombre_excel_nuevos = f"reporte_nuevos_clientes_{fecha_hoy_excel}.xlsx"
             save_path_excel_nuevos = os.path.join(output_folder, nombre_excel_nuevos)
@@ -199,6 +225,7 @@ class EcollectController:
                 self.view.main_window.update_status(f"Advertencia: No se pudo guardar el Excel de nuevos clientes: {e}")
 
             self.view.main_window.update_status(f"Paso 4.2: Generando plano de texto para los {total_nuevos} clientes nuevos...")
+            self._report_progress(90)
             fecha_hoy_usuarios = pd.Timestamp.now().strftime('%Y%m%d')
             nombre_sugerido_usuarios = f"USU10791_{fecha_hoy_usuarios} CLIENTES NUEVOS.txt"
             
@@ -207,6 +234,7 @@ class EcollectController:
             success_usuarios = self.plano_service.generar_plano_usuarios(df_usuarios_NUEVOS, save_path_usuarios)
             
             if success_usuarios:
+                self._report_progress(100)
                 self.view.main_window.update_status(f"¡Proceso Clientes completado! Plano .txt y Reporte .xlsx guardados.")
                 self.view.main_window.update_status("El maestro Excel también fue actualizado.")
             else:
@@ -214,12 +242,15 @@ class EcollectController:
                 
         except Exception as e:
             error_msg = f"Error (Clientes) durante el procesamiento: {e}"
+            self._report_progress(0)
             self.view.main_window.update_status(error_msg)
             print(f"Error detallado (Clientes): {e}")
 
+    @threaded("ecollect_colaboradores")
     def iniciar_proceso_colaboradores(self):
         """Orquesta la ejecución para COLABORADORES con la nueva lógica de guardado."""
         self.view.main_window.update_status("Iniciando proceso Colaboradores...")
+        self._report_progress(0)
         colaboradores_path = self.rutas_archivos.get("PROCESO_COLABORADORES")
         if not colaboradores_path:
             self.view.main_window.update_status("Error (Colaboradores): Por favor, seleccione el archivo de Colaboradores.")
@@ -246,6 +277,7 @@ class EcollectController:
         
         try:
             self.view.main_window.update_status("Paso 1/2 (Colaboradores): Procesando cartera...")
+            self._report_progress(40)
             df_cartera_colab = self.colaboradores_service.process_cartera(colaboradores_path)
             if df_cartera_colab is None or df_cartera_colab.empty:
                 self.view.main_window.update_status("Error (Colaboradores): No se encontraron datos en la hoja 'CARTERA'.")
@@ -260,8 +292,10 @@ class EcollectController:
                 self.view.main_window.update_status("Error (Colaboradores) al guardar el archivo de cartera.")
                 return
             self.view.main_window.update_status("Paso 1/2 (Colaboradores) completado: Plano de cartera guardado.")
+            self._report_progress(50)
 
             self.view.main_window.update_status("Paso 2/2 (Colaboradores): Procesando usuarios...")
+            self._report_progress(60)
             df_usuarios_colab = self.colaboradores_service.process_usuarios(colaboradores_path)
 
             if df_usuarios_colab is None or df_usuarios_colab.empty:
@@ -275,11 +309,13 @@ class EcollectController:
             success_usuarios = self.plano_service.generar_plano_usuarios(df_usuarios_colab, save_path_usuarios)
             
             if success_usuarios:
+                self._report_progress(100)
                 self.view.main_window.update_status("¡Proceso Colaboradores completado! Archivos generados.")
             else:
                 self.view.main_window.update_status("Error (Colaboradores) al generar el plano de usuarios.")
 
         except Exception as e:
             error_msg = f"Error (Colaboradores) durante el procesamiento: {e}"
+            self._report_progress(0)
             self.view.main_window.update_status(error_msg)
             print(f"Error detallado (Colaboradores): {e}")

@@ -1,4 +1,8 @@
 from tkinter import filedialog, messagebox
+
+# MOTIVO (hilos): el reporte es pesado; se ejecuta en un hilo del TaskRunner
+# sin congelar la UI (los diálogos/mensajes se canalizan al hilo principal).
+from src.utils.task_runner import threaded
 from src.services.anticipos.anticipos_service import AnticiposService
 
 class AnticiposController:
@@ -9,8 +13,11 @@ class AnticiposController:
     def set_view(self, view):
         self.view = view    
     
+    @threaded("anticipos")
     def start_report_generation(self,file_path):
         try:
+            # MOTIVO (progreso global): reinicia la barra única al iniciar.
+            self.view.update_display("Iniciando proceso...", 0)
             # Define una función para que el servicio actualice la UI
             def status_update_callback(message, progress):
                 # La vista principal no tiene 'update_display', verificamos si existe.

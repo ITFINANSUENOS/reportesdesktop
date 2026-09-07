@@ -106,9 +106,9 @@ class UpdateBaseService:
         reporte_df = self.report_service.products_sales.add_product_details(reporte_df, crtmp_df)
         reporte_df = self.report_service.credit_details.enrich_credit_details(reporte_df, sc04_df, fnz001_df)
         reporte_df = self.report_service.credit_details.clean_installment_data(reporte_df)
-        reporte_df = self.report_service.report_processor.map_call_center_data(reporte_df)
-        reporte_df, negativos_fnz003 = self.report_service.report_processor.calculate_balances(reporte_df, fnz003_df)
-        reporte_df = self.report_service.report_processor.calculate_goal_metrics(reporte_df)
+        reporte_df = self.report_service.categorization_service.map_call_center_data(reporte_df)
+        reporte_df, negativos_fnz003 = self.report_service.metrics_service.calculate_balances(reporte_df, fnz003_df)
+        reporte_df = self.report_service.metrics_service.calculate_goal_metrics(reporte_df)
         reporte_df = self.report_service.credit_details.adjust_arrears_status(reporte_df)
 
         negativos_finales = pd.concat([negativos_vencimientos, negativos_fnz003], ignore_index=True)

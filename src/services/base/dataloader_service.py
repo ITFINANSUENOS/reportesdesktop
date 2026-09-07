@@ -25,7 +25,15 @@ class DataLoaderService:
                     xls = pd.ExcelFile(ruta_archivo, engine='openpyxl')
                     for sheet_config in config_actual["sheets"]:
                         if sheet_config["sheet_name"] in xls.sheet_names:
-                            df_hoja = pd.read_excel(xls, sheet_name=sheet_config["sheet_name"])
+                            try:
+                                # MOTIVO (rendimiento): leer SOLO las columnas del
+                                # config evita parsear todo el archivo.
+                                df_hoja = pd.read_excel(xls, sheet_name=sheet_config["sheet_name"],
+                                                        usecols=sheet_config["usecols"])
+                            except ValueError:
+                                # Columna config ausente en el Excel: lectura tolerante
+                                # (mismo comportamiento que antes: se filtra luego).
+                                df_hoja = pd.read_excel(xls, sheet_name=sheet_config["sheet_name"])
                             df_hoja.columns = df_hoja.columns.str.strip()
                             columnas_a_usar = [col for col in sheet_config["usecols"] if col in df_hoja.columns]
                             df_filtrado = df_hoja[columnas_a_usar].rename(columns=sheet_config["rename_map"])
@@ -35,7 +43,11 @@ class DataLoaderService:
                     dataframes_por_tipo[tipo_archivo_actual].append(df)
                 else:
                     engine = 'xlrd' if ruta_archivo.upper().endswith('.XLS') else 'openpyxl'
-                    df = pd.read_excel(ruta_archivo, engine=engine)
+                    try:
+                        # MOTIVO (rendimiento): pasar usecols reduce memoria/tiempo.
+                        df = pd.read_excel(ruta_archivo, engine=engine, usecols=config_actual["usecols"])
+                    except ValueError:
+                        df = pd.read_excel(ruta_archivo, engine=engine)
                     df.columns = df.columns.str.strip()
                     columnas_a_usar = [col for col in config_actual["usecols"] if col in df.columns]
                     df_filtrado = df[columnas_a_usar]

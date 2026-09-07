@@ -1,5 +1,9 @@
 import os
 from tkinter import filedialog, messagebox
+
+# MOTIVO (hilos): el cruce es pesado; corre en un hilo del TaskRunner y la UI
+# (estado, diálogos) se canaliza al hilo principal.
+from src.utils.task_runner import threaded
 from src.services.convenios.convenios_service import ConveniosService  
 
 class ConveniosController:
@@ -14,9 +18,11 @@ class ConveniosController:
         """
         self.view = view    
         
+    @threaded("convenios")
     def start_report_generation(self, input_path):
-       
         try:
+            # MOTIVO (progreso global): reinicia la barra única al iniciar.
+            self.view.update_display("Iniciando proceso...", 0)
             # 1. Llamar al servicio para que genere los datos
             # IMPORTANTE: Ahora recibimos 3 DataFrames
             df_bancolombia, df_efecty, df_ecollect = self.service.generate_report(
