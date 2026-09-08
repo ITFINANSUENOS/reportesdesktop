@@ -1,6 +1,6 @@
 import sys
 import traceback
-import tkinter as tk
+import customtkinter as ctk
 from pathlib import Path
 
 # MOTIVO (empaquetado): en el .exe los módulos viajan dentro del PYZ y este
@@ -40,7 +40,9 @@ def main():
         # --- Logging antes de cualquier otra cosa (visible en campo) ---
         log_dir = init_logging()
 
-        root = tk.Tk()
+        # Ventana moderna con customtkinter (solo tema claro).
+        ctk.set_appearance_mode("light")
+        root = ctk.CTk()
 
         # --- Infraestructura de hilos segura ---
         runner = TaskRunner(root)
@@ -79,9 +81,17 @@ def main():
         controller_anticipos.set_view(main_view)
         controller_convenios.set_view(main_view)
 
-        # MOTIVO (bug): sin esto, cerrar la ventana con un proceso en marcha
-        # dejaba un proceso zombi. Al cerrar se detiene el pump de hilos.
+        # MOTIVO (bug/robustez): al cerrar con un proceso en marcha antes se
+        # descartaba la cola de golpe (posible archivo truncado o TimeoutError
+        # en el worker). Ahora se avisa y NO se cierra mientras haya procesos
+        # activos; así el usuario termina la tarea y luego cierra normalmente.
         def _on_close():
+            if runner.busy_keys():
+                from tkinter import messagebox
+                messagebox.showwarning(
+                    "Procesos en curso",
+                    "Hay procesos ejecutándose. Espera a que terminen y cierra de nuevo.")
+                return
             runner.shutdown()
             root.destroy()
 

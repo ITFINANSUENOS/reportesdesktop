@@ -1,156 +1,307 @@
+import os
 import pandas as pd
 from pathlib import Path
-import os
+
+# Escritura con openpyxl (replica el formato final de las plantillas:
+# encabezado congelado, colores, anchos, fuentes y fechas reales dd/mm/yyyy).
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+# ---------------------------------------------------------------------------
+# ReportWriter - Convenios
+# ---------------------------------------------------------------------------
+# MOTIVO DEL CAMBIO (estructura final):
+#   Las plantillas 'Bancolombia - plantilla.xlsx' y 'Efecty - plantilla - copia.xlsx'
+#   definen el ORDEN y FORMATO finales de cada hoja. Este escritor:
+#     * ubica cada columna en la posición de la plantilla,
+#     * renombra encabezados (p. ej. 'Valor Aplicar' -> 'Vr a Aplicar'),
+#     * parte el documento 'DF-14566' en 'Documento' (DF) y 'Numero' (14566),
+#     * deja 'C. Costo' vacía (la hoja CARTERA ya no aporta centro de costo),
+#     * conserva las columnas analíticas (Cuentas ARP/FS, SALDOS, VALIDACION)
+#       AL FINAL de cada hoja,
+#     * guarda fechas reales con formato dd/mm/yyyy.
+#   No cambia NINGUNA regla de cálculo: solo presentación/orden.
+# ---------------------------------------------------------------------------
+
 
 class ReportWriter:
-    """Formatea y guarda los DataFrames procesados en un archivo Excel con estilos."""
+    """Formatea y guarda los DataFrames procesados con la estructura final."""
 
-    COLUMN_ORDER_EFECTY = [
-        'No', 'Identificación', 'Valor', 'N° de Autorización', 'Fecha', 'Documento Cartera', 
-        'C. Costo', 'Empresa', 'Valor Aplicar', 'Valor Anticipos', 'Valor Aprovechamientos', 
-        'Casa cobranza', 'Empleado', 'Novedad','Cuentas ARP', 'Cuentas FS','SALDOS','VALIDACION ULTIMO SALDO'
-    ]
-    COLUMN_ORDER_BANCOLOMBIA = [
-        'No.', 'Fecha', 'Detalle 1', 'Detalle 2', 'Referencia 1', 'Referencia 2', 'Valor', 
-        'Documento Cartera', 'C. Costo', 'Empresa', 'Valor Aplicar', 'Valor Anticipos', 
-        'Valor Aprovechamientos', 'Casa cobranza', 'Empleado', 'Novedad', 'Cuentas ARP', 
-        'Cuentas FS','SALDOS','VALIDACION ULTIMO SALDO'
-    ]
-    # Nuevo orden para Ecollect basado en sus columnas de entrada
-    COLUMN_ORDER_ECOLLECT = [
-        '#TRANS', 'REFERENCIA 1', 'FECHA INICIO', 'CANAL DE PAGO', 'Valor',
-        'Documento Cartera', 'C. Costo', 'Empresa', 'Valor Aplicar', 'Valor Anticipos',
-        'Valor Aprovechamientos', 'Casa cobranza', 'Empleado', 'Novedad', 'Cuentas ARP',
-        'Cuentas FS', 'SALDOS', 'VALIDACION ULTIMO SALDO'
+    # --- Especificación de columnas por canal: (encabezado, columna_fuente) ---
+    # columna_fuente = None  -> columna vacía
+    # columna_fuente = 'DOC_TIPO'/'DOC_NUM' -> documento partido
+    # 'Fecha' -> se guarda como fecha real dd/mm/yyyy
+    SPEC_BANCOLOMBIA = [
+        ('No', 'No.'),                     # número original del pago
+        ('Identificación', 'Referencia 1'),  # la plantilla muestra la referencia como identificación
+        ('Valor', 'Valor'),
+        ('Ref 2', 'Referencia 2'),
+        ('Fecha', 'Fecha'),
+        ('Documento', 'DOC_TIPO'),          # tipo del documento (p. ej. 'DF')
+        ('Numero', 'DOC_NUM'),              # número del documento (p. ej. 14566)
+        ('C, Costo', None),                 # vacío: la fuente ya no trae centro de costo
+        ('Empresa', 'Empresa'),
+        ('Vr a Aplicar', 'Valor Aplicar'),
+        ('Detalle 1', 'Detalle 1'),
+        ('Detalle 2', 'Detalle 2'),
+        ('Valor Anticipos', 'Valor Anticipos'),
+        ('Valor Aprovechamientos', 'Valor Aprovechamientos'),
+        ('Casa cobranza', 'Casa cobranza'),
+        ('Empleado', 'Empleado'),
+        ('Novedad', 'Novedad'),
+        ('Ref 1', 'Referencia 1'),
+        (',', None),                        # columna de la plantilla (se mantiene vacía)
     ]
 
-    def save_report(self, output_path: str, df_bancolombia: pd.DataFrame, df_efecty: pd.DataFrame, df_ecollect: pd.DataFrame):
+    SPEC_EFECTY = [
+        ('No', 'No'),
+        ('Identificación', 'Identificación'),
+        ('Valor', 'Valor'),
+        ('N° de Autorización', 'N° de Autorización'),
+        ('Fecha', 'Fecha'),
+        ('Documento Cartera', 'DOC_TIPO'),
+        ('Numero', 'DOC_NUM'),
+        ('C. Costo', None),
+        ('Empresa', 'Empresa'),
+        ('Vr a Aplicar', 'Valor Aplicar'),
+        ('Valor Anticipos', 'Valor Anticipos'),
+        ('Valor Aprovechamientos', 'Valor Aprovechamientos'),
+        ('Casa cobranza', 'Casa cobranza'),
+        ('Empleado', 'Empleado'),
+        ('Novedad', 'Novedad'),
+    ]
+
+    # Columnas analíticas que la plantilla no trae pero se conservan al final.
+    ANALYTIC_COLUMNS = ['Cuentas ARP', 'Cuentas FS', 'SALDOS', 'VALIDACION ULTIMO SALDO']
+
+    # --- Anchos de columna tomados de las plantillas ---
+    WIDTH_BANCOLOMBIA = {
+        'No': 4.6, 'Identificación': 14.0, 'Valor': 15.9, 'Ref 2': 12.4,
+        'Fecha': 13.3, 'Documento': 14.3, 'Numero': 11.1, 'C, Costo': 14.7,
+        'Empresa': 14.6, 'Vr a Aplicar': 12.4, 'Detalle 1': 32.9, 'Detalle 2': 14.0,
+        'Valor Anticipos': 15.4, 'Valor Aprovechamientos': 23.4, 'Casa cobranza': 14.9,
+        'Empleado': 11.1, 'Novedad': 36.0, 'Ref 1': 14.0, ',': 6.6,
+    }
+    WIDTH_EFECTY = {
+        'No': 4.1, 'Identificación': 13.9, 'Valor': 15.3, 'N° de Autorización': 13.3,
+        'Fecha': 13.3, 'Documento Cartera': 15.3, 'Numero': 15.3, 'C. Costo': 9.7,
+        'Empresa': 15.3, 'Vr a Aplicar': 13.9, 'Valor Anticipos': 14.3,
+        'Valor Aprovechamientos': 17.9, 'Casa cobranza': 17.9, 'Empleado': 11.4,
+        'Novedad': 31.3,
+    }
+
+    # --- Estilos (replicando las plantillas) ---
+    FONT_HEADER = Font(name='Maiandra GD', size=10, bold=True)
+    FONT_DATA = Font(name='Maiandra GD', size=10)
+    FILL_GREEN = PatternFill(start_color='FF92D050', end_color='FF92D050', fill_type='solid')
+    FILL_ORANGE = PatternFill(start_color='FFFFC000', end_color='FFFFC000', fill_type='solid')
+    ALIGN_HEADER = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    THIN = Side(style='thin', color='FF000000')
+    BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+
+    # --- Resaltado de filas (se restaura el comportamiento previo del reporte) ---
+    # MOTIVO: el escritor anterior coloreaba filas para alertar visualmente:
+    #   rojo  -> cliente con más de una cartera,
+    #   azul  -> empleado (Empleado = SI),
+    #   amarillo -> documento duplicado.
+    # Se puede desactivar con una sola constante si se quiere un Excel limpio.
+    RESALTAR_COLORES = True
+    FILL_LIGHT_RED = PatternFill(start_color='FFF08080', end_color='FFF08080', fill_type='solid')
+    FILL_LIGHT_BLUE = PatternFill(start_color='FFADD8E6', end_color='FFADD8E6', fill_type='solid')
+    FILL_YELLOW = PatternFill(start_color='FFFFFF00', end_color='FFFFFF00', fill_type='solid')
+
+    ORANGE_HEADERS = {'Documento', 'Numero', 'Documento Cartera'}
+
+    def save_report(self, output_path: str, df_bancolombia: pd.DataFrame, df_efecty: pd.DataFrame,
+                    df_ecollect: pd.DataFrame):
+        """Guarda un único Excel con una hoja por canal (estructura de plantilla)."""
         if df_bancolombia.empty and df_efecty.empty and df_ecollect.empty:
             raise ValueError("No se encontraron datos de pago para generar el reporte.")
 
-        # Aplicar formato y reordenamiento
-        df_bancolombia = self._format_and_reorder_data(df_bancolombia, 'bancolombia')
-        df_efecty = self._format_and_reorder_data(df_efecty, 'efecty')
-        df_ecollect = self._format_and_reorder_data(df_ecollect, 'ecollect')
-
         final_path = Path(output_path)
-        temp_dir = final_path.parent
-        temp_file_path = temp_dir / f"temp_{os.getpid()}_{final_path.name}"
-        
+        temp_path = final_path.parent / f"temp_{os.getpid()}_{final_path.name}"
+
+        wb = Workbook()
+        if wb.active is not None:
+            wb.remove(wb.active)  # quitar hoja por defecto
+
+        wrote_something = False
+        for sheet_name, df in (("Bancolombia", df_bancolombia),
+                               ("Efecty", df_efecty),
+                               ("Ecollect", df_ecollect)):
+            if df.empty:
+                # MOTIVO: hoy se omiten los canales sin datos (comportamiento previo).
+                continue
+            self._write_sheet(wb, sheet_name, df)
+            wrote_something = True
+
+        if not wrote_something:
+            raise ValueError("No se encontraron datos de pago para generar el reporte.")
+
+        wb.save(temp_path)
         try:
-            with pd.ExcelWriter(temp_file_path, engine='xlsxwriter') as writer:
-                
-                wrote_something = False
-                
-                # Guardar Bancolombia
-                if not df_bancolombia.empty:
-                    styled_bancolombia = self._apply_styles(df_bancolombia)
-                    styled_bancolombia.to_excel(writer, sheet_name='Bancolombia', index=False)
-                    wrote_something = True
-                
-                # Guardar Efecty
-                if not df_efecty.empty:
-                    styled_efecty = self._apply_styles(df_efecty)
-                    styled_efecty.to_excel(writer, sheet_name='Efecty', index=False)
-                    wrote_something = True
-
-                # Guardar Ecollect (NUEVO)
-                if not df_ecollect.empty:
-                    styled_ecollect = self._apply_styles(df_ecollect)
-                    styled_ecollect.to_excel(writer, sheet_name='Ecollect', index=False)
-                    wrote_something = True
-
-                if not wrote_something:
-                    pd.DataFrame({'Mensaje': ['No hay datos válidos para mostrar']}).to_excel(writer, sheet_name='Diagnóstico', index=False)
-            
-            os.replace(temp_file_path, final_path)
-            print(f"✅ Reporte con estilos guardado exitosamente usando XlsxWriter en {final_path.resolve()}")
-
-        except Exception as e:
-            raise ValueError(f"❌ Error inesperado al guardar con XlsxWriter: {e}")
+            os.replace(temp_path, final_path)
+        except PermissionError:
+            # MOTIVO (robustez): en Windows no se puede sobrescribir un archivo
+            # abierto en Excel. Se avisa claro para que el usuario lo cierre.
+            raise ValueError(
+                f"No se pudo guardar el reporte porque '{final_path.name}' está abierto. "
+                "Ciérralo en Excel e inténtalo de nuevo.")
         finally:
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
-                
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        print(f"Reporte con estilos guardado correctamente (formato plantilla): {final_path.resolve()}")
 
-    def _format_and_reorder_data(self, df: pd.DataFrame, df_type: str) -> pd.DataFrame:
-        """Aplica formateo y reordena columnas antes de guardar."""
-        if df.empty:
-            return df
+    # ------------------------------------------------------------- internos
+    def _write_sheet(self, workbook, sheet_name: str, df: pd.DataFrame):
+        """Escribe una hoja con el orden/formato de la plantilla correspondiente."""
+        spec = self.SPEC_BANCOLOMBIA if sheet_name == 'Bancolombia' else (
+            self.SPEC_EFECTY if sheet_name == 'Efecty' else None)
 
-        # Formato de Fecha (Genérico)
-        if 'Fecha' in df.columns:
-            df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce').dt.strftime('%d/%m/%Y')
-        
-        # Formato específico para Ecollect
-        if df_type == 'ecollect':
-            if 'FECHA INICIO' in df.columns:
-                df['FECHA INICIO'] = pd.to_datetime(df['FECHA INICIO'], errors='coerce').dt.strftime('%d/%m/%Y')
+        if spec is None:
+            # Ecollect aún no tiene plantilla: se mantiene el DataFrame tal cual.
+            spec = [(col, col) for col in df.columns]
 
-        # Formato específico de Bancolombia
-        if df_type == 'bancolombia':
-            if 'Referencia 1' in df.columns:
-                df['Referencia 1'] = df['Referencia 1'].apply(self._clean_reference)
-            if 'Referencia 2' in df.columns:
-                df['Referencia 2'] = df['Referencia 2'].apply(self._clean_reference)
+        # (1) Reordenar/re-mapear columnas al orden objetivo (+ analíticas al final).
+        out = self._build_ordered_frame(df, spec)
 
-        # Selección de orden de columnas
-        if df_type == 'bancolombia':
-            order = self.COLUMN_ORDER_BANCOLOMBIA
-        elif df_type == 'efecty':
-            order = self.COLUMN_ORDER_EFECTY
-        elif df_type == 'ecollect':
-            order = self.COLUMN_ORDER_ECOLLECT
-        else:
-            order = df.columns.tolist()
-        
-        # Asegurar que todas las columnas existan para evitar errores
-        for col in order:
-            if col not in df.columns:
-                df[col] = None 
+        ws = workbook.create_sheet(title=sheet_name)
 
-        return df[order]
+        # (2) Encabezado
+        for col_idx, header in enumerate(out.columns, start=1):
+            cell = ws.cell(row=1, column=col_idx, value=header)
+            cell.font = self.FONT_HEADER
+            cell.alignment = self.ALIGN_HEADER
+            cell.border = self.BORDER
+            cell.fill = self.FILL_ORANGE if header in self.ORANGE_HEADERS else self.FILL_GREEN
+            width_map = self.WIDTH_BANCOLOMBIA if sheet_name == 'Bancolombia' else (
+                self.WIDTH_EFECTY if sheet_name == 'Efecty' else {})
+            ws.column_dimensions[cell.column_letter].width = width_map.get(header, 14.0)
 
-    def _apply_styles(self, df: pd.DataFrame):
-        """Aplica todos los estilos condicionales a un DataFrame."""
-        styler = df.style
-        # Primero se aplica el resaltado por filas
-        styler = styler.apply(self._highlight_accounts, axis=1)
-        # Luego se aplica el resaltado por celdas
-        styler = styler.apply(self._highlight_employees_and_duplicates, axis=None)
-        return styler
+        # (3) Datos (con fuente de plantilla, bordes y fechas dd/mm/yyyy)
+        row_fills = self._compute_row_fills(out) if self.RESALTAR_COLORES else None
+        is_date_col = {c: (h == 'Fecha') for c, h in enumerate(out.columns)}
+        for seq, values in enumerate(out.itertuples(index=False, name=None)):
+            row_idx = seq + 2
+            fill = row_fills[seq] if row_fills else None
+            for col_idx, value in enumerate(values, start=1):
+                cell = ws.cell(row=row_idx, column=col_idx)
+                if value is None or (isinstance(value, float) and pd.isna(value)):
+                    value = None
+                cell.value = value
+                cell.font = self.FONT_DATA
+                cell.border = self.BORDER
+                if fill is not None:
+                    cell.fill = fill
+                if is_date_col[col_idx - 1] and value is not None:
+                    cell.number_format = 'DD/MM/YYYY'
 
-    def _clean_reference(self, value):
-        """Limpia los valores de las columnas de referencia."""
-        try:
-            return str(int(float(value))) if pd.notna(value) and value != '' else ''
-        except (ValueError, TypeError):
-            return str(value) # Devuelve el valor original si no se puede convertir
+        ws.freeze_panes = 'A2'
 
-    def _highlight_accounts(self, row):
-        """Resalta filas donde un cliente tiene múltiples carteras."""
-        styles = [''] * len(row)
-        if 'Cuentas ARP' in row and 'Cuentas FS' in row:
-            arp, fs = row['Cuentas ARP'], row['Cuentas FS']
-            if (arp >= 2) or (fs >= 2) or (arp >= 1 and fs >= 1):
-                styles = ['background-color: lightcoral'] * len(row)
-        return styles
+    def _compute_row_fills(self, out: pd.DataFrame):
+        """Decide el color de cada fila de datos (mismas reglas que el reporte viejo).
 
-    def _highlight_employees_and_duplicates(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Resalta filas correspondientes a empleados o duplicados."""
-        # Crea un DataFrame de estilos vacío con el mismo tamaño que el de datos
-        styles = pd.DataFrame('', index=df.index, columns=df.columns)
-        
-        # Resaltar empleados
-        if 'Empleado' in df.columns:
-            empleado_mask = df['Empleado'].str.upper().str.strip() == 'SI'
-            styles.loc[empleado_mask, :] = 'background-color: lightblue'
-            
-        # Resaltar duplicados en 'Documento Cartera'
-        if 'Documento Cartera' in df.columns:
-            dup_mask = df.duplicated('Documento Cartera', keep=False) & (df['Documento Cartera'] != 'SIN CARTERA')
-            # Pinta de amarillo solo donde la condición dup_mask es verdadera,
-            # respetando los colores ya aplicados a los empleados.
-            styles.loc[dup_mask, :] = styles.loc[dup_mask, :].where(styles != '', 'background-color: yellow')
+        Devuelve una lista alineada con las filas de 'out' (None = sin color).
+        """
+        n = len(out)
+        fills = [None] * n
+        if n == 0:
+            return fills
 
-        return styles
+        def has(col):
+            return col in out.columns
+
+        # Rojo: cliente con más de una cartera (ARP o FS con 2+ cuentas, o en ambas).
+        multi = None
+        if has('Cuentas ARP') and has('Cuentas FS'):
+            arp = pd.to_numeric(out['Cuentas ARP'], errors='coerce').fillna(0)
+            fs = pd.to_numeric(out['Cuentas FS'], errors='coerce').fillna(0)
+            multi = (arp >= 2) | (fs >= 2) | ((arp >= 1) & (fs >= 1))
+
+        # Azul: fila de empleado.
+        empleado = None
+        if has('Empleado'):
+            empleado = out['Empleado'].astype(str).str.upper().str.strip() == 'SI'
+
+        # Amarillo: documento duplicado (el documento ahora va partido en
+        # 'Documento' + 'Numero'; se reconstruye la llave para detectarlo igual).
+        dup = None
+        key = None
+        if has('Documento Cartera'):
+            key = out['Documento Cartera'].astype(str).str.strip()
+        elif has('Documento') and has('Numero'):
+            key = (out['Documento'].astype(str) + '-' + out['Numero'].astype(str)).str.strip()
+        if key is not None:
+            valido = key.notna() & (key != '') & (key != '-') & (key.str.upper() != 'NAN')
+            dup = key.duplicated(keep=False) & valido
+
+        for i in range(n):
+            if multi is not None and bool(multi.iloc[i]):
+                fills[i] = self.FILL_LIGHT_RED
+            elif empleado is not None and bool(empleado.iloc[i]):
+                fills[i] = self.FILL_LIGHT_BLUE
+            elif dup is not None and bool(dup.iloc[i]):
+                fills[i] = self.FILL_YELLOW
+        return fills
+
+    def _build_ordered_frame(self, df: pd.DataFrame, spec) -> pd.DataFrame:
+        """Construye el DataFrame final en el orden exacto de la plantilla."""
+        doc_series = df['Documento Cartera'] if 'Documento Cartera' in df.columns else None
+
+        ordered = {}
+        for header, source in spec:
+            if source is None:
+                ordered[header] = None
+            elif source == 'DOC_TIPO':
+                ordered[header] = doc_series.map(self._doc_tipo) if doc_series is not None else None
+            elif source == 'DOC_NUM':
+                ordered[header] = doc_series.map(self._doc_numero) if doc_series is not None else None
+            elif source == 'Fecha' and 'Fecha' in df.columns:
+                ordered[header] = self._coerce_date(df['Fecha'])
+            else:
+                ordered[header] = df[source] if source in df.columns else None
+
+        out = pd.DataFrame(ordered)
+
+        # Columnas analíticas al final (si existen en el resultado procesado).
+        for col in self.ANALYTIC_COLUMNS:
+            if col in df.columns:
+                out[col] = df[col].values
+
+        return out
+
+    @staticmethod
+    def _coerce_date(series) -> pd.Series:
+        """Convierte fechas a datetime real.
+
+        MOTIVO: las fechas del archivo vienen en formato DD/MM/AAAA (colombiano)
+        pero a veces como texto y a veces ya como fecha de Excel. Se fuerza el
+        formato día-primero para evitar que '15/06/2026' se lea como 06/15/2026.
+        """
+        if pd.api.types.is_datetime64_any_dtype(series):
+            return pd.to_datetime(series, errors='coerce')
+        converted = pd.to_datetime(series, format='%d/%m/%Y', errors='coerce')
+        # Si alguna no coincide con el formato, se intenta el parseo genérico.
+        if converted.isna().any():
+            fallback = pd.to_datetime(series, errors='coerce')
+            return converted.fillna(fallback)
+        return converted
+
+    @staticmethod
+    def _doc_tipo(value):
+        """Extrae el tipo del documento: 'DF-14566' -> 'DF'."""
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return None
+        s = str(value).strip()
+        return s.split('-', 1)[0] if '-' in s else ''
+
+    @staticmethod
+    def _doc_numero(value):
+        """Extrae el número del documento: 'DF-14566' -> 14566."""
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return None
+        s = str(value).strip()
+        if '-' not in s:
+            return ''
+        numero = s.split('-', 1)[1]
+        return int(numero) if numero.isdigit() else numero

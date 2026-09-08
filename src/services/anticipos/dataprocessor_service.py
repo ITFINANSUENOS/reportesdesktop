@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 from typing import Dict
 from src.models.anticipos_model import AnticiposConfig
+# MOTIVO (bug de cruces): normaliza llaves numéricas ("1010.0" -> "1010").
+from src.utils.data_clean import clean_key_series
 
 class AnticiposDataProcessor:
     """Contiene toda la lógica para transformar los datos de anticipos."""
@@ -15,9 +17,11 @@ class AnticiposDataProcessor:
         df_ac_fs = dfs['AC FS']
         df_ac_arp = dfs['AC ARP']
 
-        df_online['CEDULA'] = df_online['CEDULA'].astype(str).str.strip()
-        df_ac_fs['CEDULA'] = df_ac_fs['CEDULA'].astype(str).str.strip()
-        df_ac_arp['CEDULA'] = df_ac_arp['CEDULA'].astype(str).str.strip()
+        # Las llaves se normalizan en ambos lados para que el cruce por cédula
+        # funcione aunque el Excel guarde los IDs como números ("1010.0").
+        df_online['CEDULA'] = clean_key_series(df_online['CEDULA'])
+        df_ac_fs['CEDULA'] = clean_key_series(df_ac_fs['CEDULA'])
+        df_ac_arp['CEDULA'] = clean_key_series(df_ac_arp['CEDULA'])
 
         df_online['CUENTAS_FS'] = df_online['CEDULA'].map(df_ac_fs['CEDULA'].value_counts()).fillna(0).astype(int)
         df_online['CUENTAS_ARP'] = df_online['CEDULA'].map(df_ac_arp['CEDULA'].value_counts()).fillna(0).astype(int)

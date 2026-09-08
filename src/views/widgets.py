@@ -1,128 +1,103 @@
 # src/views/widgets.py
 #
-# Componentes visuales COMPARTIDOS por todos los módulos.
+# Componentes visuales COMPARTIDOS (customtkinter).
 #
-# MOTIVO DE ESTE MÓDULO:
-#   Antes, cada vista copiaba el bloque de canvas+scroll con proporciones y
-#   paddings distintos (5-90-5, 10-80-10, tarjetas con padding 15/18/20...),
-#   lo que hacía que los módulos se vieran con ritmos diferentes. Aquí se
-#   definen UNA VEZ las piezas que usan todas las páginas (área con scroll,
-#   tarjeta, campo de archivo, botón de acción) para que la interfaz sea
-#   visualmente consistente en toda la aplicación. No contiene lógica.
-import tkinter as tk
-from tkinter import ttk
+# MOTIVO DEL CAMBIO: tkinter/ttk no permite un look realmente moderno
+# (esquinas finas, sombras, widgets pulidos). Se migró la capa visual a
+# customtkinter manteniendo los MISMOS helpers y firmas para que los
+# controladores/servicios no cambien (solo se reescribe la presentación).
+import customtkinter as ctk
 
 from src.views.config_view.theme import THEME, FONT_FAMILY
-from src.views.config_view.theme import (
-    SPACE_PAGE_TOP,
-    SPACE_PAGE_BOTTOM,
-    SPACE_CARD_GAP,
-    SPACE_CARD_PAD,
-    SPACE_FIELD_TOP,
-    SPACE_FIELD_BOTTOM,
-    SPACE_ENTRY_BTN,
-    SPACE_ACTION_TOP,
-    DESC_WRAP,
-)
+from src.views.config_view.theme import SPACE_CARD_GAP, SPACE_ENTRY_BTN, DESC_WRAP
+
+# Fuentes base (escala consistente).
+_FONT_LABEL = (FONT_FAMILY, 11)
+_FONT_LABEL_BOLD = (FONT_FAMILY, 12, "bold")
+_FONT_SMALL = (FONT_FAMILY, 10)
+_FONT_ACTION = (FONT_FAMILY, 12, "bold")
 
 
-def add_scroll_area(frame) -> ttk.Frame:
-    """Crea el área con scroll estándar dentro de 'frame'.
+def add_scroll_area(frame) -> ctk.CTkScrollableFrame:
+    """Crea el área con scroll de las páginas (customtkinter ya trae scrollbar).
 
-    Retorna el contenedor central donde cada página coloca su contenido.
-    MOTIVO: normaliza el patrón canvas+scrollbar+columna centrada que hoy cada
-    vista repetía con proporciones distintas; todas las páginas usan el mismo
-    encuadre (columna 5-90-5) y los mismos márgenes verticales.
+    Retorna el contenedor donde la página coloca sus tarjetas.
     """
-    canvas = tk.Canvas(frame, bg=THEME.bg, highlightthickness=0)
-    scrollbar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
-
-    scrollable = ttk.Frame(canvas)
-    content = ttk.Frame(scrollable)
-
-    # Cada vez que cambie el tamaño del contenido, se recalcula la zona de scroll.
-    scrollable.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-    content.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-
-    window_id = canvas.create_window((0, 0), window=scrollable, anchor="nw")
-
-    # El frame interno adopta el ancho del canvas (contenido fluido al redimensionar).
-    canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window_id, width=e.width))
-    canvas.configure(yscrollcommand=scrollbar.set)
-
-    canvas.pack(side="left", fill="both", expand=True)
-    scrollbar.pack(side="right", fill="y")
-
-    # Columna central ancha (estilo de todas las páginas).
-    scrollable.columnconfigure(0, weight=5)
-    scrollable.columnconfigure(1, weight=90)
-    scrollable.columnconfigure(2, weight=5)
-    content.grid(row=0, column=1, sticky="nsew", pady=(SPACE_PAGE_TOP, SPACE_PAGE_BOTTOM))
-    return content
+    scroll = ctk.CTkScrollableFrame(frame, fg_color=THEME.bg, corner_radius=0)
+    scroll.pack(fill="both", expand=True, padx=0, pady=0)
+    return scroll
 
 
-def card(parent, title=None) -> ttk.LabelFrame:
-    """Crea y ubica una tarjeta (LabelFrame) con el estilo y espaciado estándar."""
-    text = f" {title} " if title else ""
-    frame = ttk.LabelFrame(parent, text=text, padding=SPACE_CARD_PAD)
-    frame.pack(fill="x", pady=(0, SPACE_CARD_GAP))
-    return frame
+def card(parent, title=None) -> ctk.CTkFrame:
+    """Tarjeta blanca redondeada con título (si se indica).
+
+    Devuelve el contenedor interior transparente donde se ponen los campos.
+    """
+    frame = ctk.CTkFrame(parent, fg_color=THEME.surface, corner_radius=14,
+                         border_width=1, border_color=THEME.border)
+    frame.pack(fill="x", padx=4, pady=(0, SPACE_CARD_GAP))
+    if title:
+        label = ctk.CTkLabel(frame, text=f" {title} ", text_color=THEME.accent,
+                             font=_FONT_LABEL_BOLD, anchor="w")
+        label.pack(anchor="w", padx=18, pady=(12, 0))
+    inner = ctk.CTkFrame(frame, fg_color="transparent")
+    inner.pack(fill="x", padx=18, pady=(6, 16))
+    return inner
 
 
-def description(parent, text: str) -> ttk.Label:
-    """Texto descriptivo dentro de una tarjeta (con estilo y ancho comunes)."""
-    label = ttk.Label(
-        parent,
-        text=text,
-        style="Card.TLabel",
-        wraplength=DESC_WRAP,
-        justify="left",
-    )
-    label.pack(anchor="w", pady=(0, 8))
-    return label
+def description(parent, text: str) -> None:
+    """Texto descriptivo dentro de una tarjeta (ancho de texto controlado)."""
+    ctk.CTkLabel(parent, text=text, text_color=THEME.muted,
+                 font=_FONT_SMALL, wraplength=DESC_WRAP, justify="left",
+                 anchor="w").pack(anchor="w", pady=(0, 6))
 
 
 def file_field(parent, label_text: str, var, command) -> None:
-    """Campo de archivo canónico: etiqueta + Entry readonly + botón.
+    """Campo de archivo canónico: etiqueta + entrada readonly + botón."""
+    ctk.CTkLabel(parent, text=label_text, text_color=THEME.text,
+                 font=_FONT_LABEL, anchor="w").pack(anchor="w", pady=(12, 6))
 
-    MOTIVO: unifica los selectores de archivos de todos los módulos (antes Base
-    usaba un chip, Centrales un botón "📂", etc.) en una sola presentación.
-    """
-    ttk.Label(parent, text=label_text, style="Card.TLabel").pack(
-        anchor="w", pady=(SPACE_FIELD_TOP, SPACE_FIELD_BOTTOM))
-
-    row = ttk.Frame(parent, style="Card.TFrame")
+    row = ctk.CTkFrame(parent, fg_color="transparent")
     row.pack(fill="x")
-    row.columnconfigure(0, weight=1)
+    row.grid_columnconfigure(0, weight=1)
 
-    entry = ttk.Entry(row, textvariable=var, state="readonly", style="Readonly.TEntry")
+    entry = ctk.CTkEntry(row, textvariable=var, state="readonly",
+                         fg_color=THEME.surface_alt, text_color=THEME.muted,
+                         height=36, corner_radius=8, border_width=1,
+                         border_color=THEME.border, font=_FONT_SMALL)
     entry.grid(row=0, column=0, sticky="ew", padx=(0, SPACE_ENTRY_BTN))
-    ttk.Button(row, text="Seleccionar...", command=command).grid(row=0, column=1)
+
+    button = ctk.CTkButton(row, text="Seleccionar...", command=command,
+                           width=140, height=36, corner_radius=8,
+                           fg_color=THEME.accent, hover_color=THEME.accent_hover,
+                           text_color="#FFFFFF", font=(FONT_FAMILY, 11))
+    button.grid(row=0, column=1)
 
 
-def action_button(parent, text: str, command) -> ttk.Button:
-    """Botón de acción principal (único estilo redondeado, centrado).
-
-    MOTIVO: antes cada módulo usaba estilos/alineaciones distintos (algunos
-    estiraban el botón a todo el ancho). Con este helper todos los botones
-    'Generar/Iniciar/Procesar' se ven y se colocan igual.
-    """
-    button = ttk.Button(parent, text=text, command=command, style="Modern.TButton")
-    button.pack(pady=(SPACE_ACTION_TOP, 4))
+def action_button(parent, text: str, command) -> ctk.CTkButton:
+    """Botón de acción principal (acento, redondeado y centrado)."""
+    button = ctk.CTkButton(parent, text=text, command=command, height=44,
+                           corner_radius=10, fg_color=THEME.accent,
+                           hover_color=THEME.accent_hover, text_color="#FFFFFF",
+                           font=_FONT_ACTION)
+    button.pack(pady=(18, 4))
     return button
 
 
 def status_area(parent, initial_text: str = ""):
     """Área de estado + progreso (estilo común donde un módulo la usa)."""
-    label = ttk.Label(parent, text=initial_text, style="Muted.TLabel", anchor="center")
-    label.pack(fill="x", pady=(14, 2))
-    bar = ttk.Progressbar(parent, orient="horizontal", mode="determinate")
-    bar.pack(fill="x", pady=(4, 0))
+    label = ctk.CTkLabel(parent, text=initial_text, text_color=THEME.muted,
+                         font=_FONT_SMALL)
+    label.pack(pady=(12, 6))
+    bar = ctk.CTkProgressBar(parent, height=12, corner_radius=6,
+                             fg_color=THEME.surface_alt,
+                             progress_color=THEME.accent)
+    bar.set(0)
+    bar.pack(fill="x")
     return label, bar
 
 
-def note_label(parent, text: str) -> ttk.Label:
-    """Etiqueta secundaria (título de sección) dentro de una tarjeta."""
-    label = ttk.Label(parent, text=text, style="CardHeader.TLabel")
-    label.pack(anchor="w")
-    return label
+def note_label(parent, text: str) -> None:
+    """Título de sección pequeño dentro de una tarjeta."""
+    ctk.CTkLabel(parent, text=text, text_color=THEME.text,
+                 font=_FONT_LABEL_BOLD, anchor="w").pack(anchor="w")

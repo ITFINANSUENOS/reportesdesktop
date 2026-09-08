@@ -16,15 +16,21 @@
 #     set APP_REPORTES_ONEFILE=1  (o en PowerShell: $env:APP_REPORTES_ONEFILE=1)
 #     pyinstaller --noconfirm --clean app-reportes.spec
 import os
+from PyInstaller.utils.hooks import collect_data_files
 
 SPECPATH_ROOT = os.path.abspath(SPECPATH)  # raíz del repo (SPECPATH lo da PyInstaller)
 ONEFILE = os.environ.get("APP_REPORTES_ONEFILE", "") == "1"
+
+# MOTIVO: customtkinter carga sus temas y fuentes desde la carpeta 'assets'
+# dentro del paquete; PyInstaller no los incluye por defecto, así que se
+# agregan explícitamente como datos.
+_CTK_DATA = collect_data_files("customtkinter")
 
 a = Analysis(
     [os.path.join(SPECPATH_ROOT, "src", "app.py")],
     pathex=[SPECPATH_ROOT],
     binaries=[],
-    datas=[],
+    datas=_CTK_DATA,
     hiddenimports=[
         # Motores de Excel usados SOLO como string (engine='...'); sin import
         # estático PyInstaller no los detecta y fallarían en runtime.

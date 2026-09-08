@@ -1,26 +1,21 @@
-import tkinter as tk
-from tkinter import ttk
+# src/views/main_window.py
+#
+# Ventana principal (customtkinter).
+#
+# MOTIVO DEL CAMBIO: se migró de tkinter/ttk a customtkinter para lograr un look
+# realmente moderno (tarjetas/botones redondeados, colores limpios y sidebar).
+# La estructura y los métodos que usan los controladores NO cambian:
+# select_page(), update_status(), update_progress(), update_display().
 import datetime
+import functools
 
-# MOTIVO (hilos): estas utilidades permiten que los métodos de UI se ejecuten
-# siempre en el hilo principal aunque un hilo de trabajo los invoque.
+import customtkinter as ctk
+
+# MOTIVO (hilos): estos métodos de UI corren siempre en el hilo principal.
 from src.utils.task_runner import main_thread
+from src.views.config_view.theme import THEME, FONT_FAMILY
 from src.views.config_view.config_view import AppConfig
-from src.views.config_view.style_assets import create_rounded_button_images
-from src.views.config_view.assets import (
-    app_icon_photo,
-    brand_photo,
-    button_photos,
-    rounded_photo,
-)
-from src.views.config_view.theme import (
-    THEME,
-    apply_theme,
-    register_card_style,
-    register_secondary_button,
-    register_accent_button,
-    register_primary_button,
-)
+from src.views.config_view.assets import app_icon_photo
 from src.views.convenios_anticipos_view.convenios_anticipos_view import ConveniosAnticiposView
 from src.views.base_view.base_mensual_tab_view import BaseMensualTabView
 from src.views.centrales_view.centrales_tab_view import CentralesTabView
@@ -28,28 +23,15 @@ from src.views.ecollect.ecollect_view import EcollectView
 
 
 class MainWindow:
-    """Ventana principal con navegación lateral (sidebar) estilo Fluent.
+    """Ventana principal con navegación lateral (sidebar) estilo moderno."""
 
-    MOTIVO DEL REDISEÑO: antes la app era un único Notebook con pestañas
-    superiores sobre un tema ttk sin estilizar. Para una apariencia moderna se
-    sustituye el notebook exterior por un SIDEBAR índigo con navegación y una
-    cabecera de módulo. Cada página (Convenios, Base Mensual, Centrales,
-    Ecollect) es la MISMA vista de siempre (ttk.Frame), solo que ahora se
-    muestra/oculta dentro del área de contenido; la lógica no cambia.
-    """
+    SIDEBAR_W = 250
 
-    SIDEBAR_W = 236
-
-    # Metadatos de navegación: clave -> (etiqueta, subtítulo, chip, fabrica).
     NAV = [
-        ("convenios", "Convenios y Anticipos",
-         "Cruce Bancolombia, Efecty, Ecollect y anticipos online", "CA"),
-        ("base_mensual", "Base Mensual",
-         "Reporte base y novedades / análisis mensual", "BM"),
-        ("centrales", "Centrales de Riesgo",
-         "Reportes Datacrédito y CIFIN - ARPESOD / FINANSUEÑOS", "CR"),
-        ("ecollect", "Ecollect",
-         "Generación de planos de clientes y colaboradores", "EC"),
+        ("convenios", "Convenios y Anticipos"),
+        ("base_mensual", "Base Mensual"),
+        ("centrales", "Centrales de Riesgo"),
+        ("ecollect", "Ecollect"),
     ]
 
     def __init__(self, root, controller_convenios, controller_anticipos, controller_base_mensual,
@@ -69,21 +51,20 @@ class MainWindow:
             "ecollect": controller_ecollect,
         }
 
-        self._pages = {}          # key -> vista (ttk.Frame)
-        self._nav_rows = {}       # key -> dict de widgets del item del sidebar
-        self._nav_photos = {}     # chips dibujados (mantener referencias)
+        self._pages = {}
+        self._nav_buttons = {}
         self._current = None
 
-        # --- Configuración de la ventana ---
+        # --- Ventana ---
         self.root.title(self.config.title)
         self.root.minsize(self.config.min_width, self.config.min_height)
         self.root.geometry(self.config.geometry)
         self.root.resizable(True, True)
-        self.root.configure(background=THEME.sidebar_bg)
-        # Ícono propio de la app (antes tkinter mostraba un ícono genérico).
-        self.root.iconphoto(True, app_icon_photo(THEME.accent, THEME.on_accent))
+        try:
+            self.root.iconphoto(True, app_icon_photo(THEME.accent, THEME.on_accent))
+        except Exception:
+            pass
 
-        self._setup_styles()
         self._build_shell()
         self._center_window()
         self.select_page("convenios")
@@ -91,173 +72,60 @@ class MainWindow:
         controller_anticipos.set_view(self)
         controller_convenios.set_view(self)
 
-    # ---------------------------------------------------------------- estilos
-    def _setup_styles(self):
-        """Configura el tema (paleta + botones/tarjetas redondeados).
-
-        MOTIVO: todo el estilo se centraliza en theme.py; aquí solo se generan
-        las imágenes 9-patch (con PIL) y se registran en los estilos de ttk.
-        """
-        style = ttk.Style()
-        style.theme_use("clam")
-        apply_theme(style)
-
-        # Tarjetas: LabelFrames con fondo blanco y borde sutil (look plano).
-        register_card_style(style)
-
-        # Botones: secundario (gris suave) + acento (índigo) + primario.
-        th = THEME
-        register_secondary_button(
-            style,
-            button_photos(th.soft_bg, th.soft_hover, th.soft_pressed, th.soft_disabled),
-        )
-        register_accent_button(
-            style,
-            button_photos(th.accent, th.accent_hover, th.accent_active, th.soft_disabled),
-        )
-        self.button_images = create_rounded_button_images(self.config)
-        register_primary_button(style, self.button_images)
-
     # ---------------------------------------------------------------- layout
     def _build_shell(self):
-        """Construye el esqueleto: sidebar izquierdo + área de contenido."""
-        # --- SIDEBAR (fondo índigo profundo) ---
-        sidebar = tk.Frame(self.root, bg=THEME.sidebar_bg, width=self.SIDEBAR_W)
-        sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        """Sidebar izquierdo + área de contenido (cabecera, páginas, estado)."""
+        # --- SIDEBAR ---
+        sidebar = ctk.CTkFrame(self.root, width=self.SIDEBAR_W, corner_radius=0,
+                               fg_color=THEME.sidebar_bg)
+        sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
 
-        self._build_sidebar(sidebar)
+        ctk.CTkLabel(sidebar, text="Reportes Financieros",
+                     text_color=THEME.sidebar_text,
+                     font=(FONT_FAMILY, 14, "bold")).pack(anchor="w", padx=18, pady=(22, 2))
+        ctk.CTkLabel(sidebar, text="Departamento Financiero",
+                     text_color=THEME.sidebar_text_dim,
+                     font=(FONT_FAMILY, 9)).pack(anchor="w", padx=18, pady=(0, 20))
 
-        # --- ÁREA DE CONTENIDO (derecha) ---
-        content_shell = ttk.Frame(self.root)
-        content_shell.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        nav = ctk.CTkFrame(sidebar, fg_color="transparent")
+        nav.pack(fill="x", padx=10)
+        for key, label in self.NAV:
+            button = ctk.CTkButton(
+                nav, text=label, anchor="w", height=42, corner_radius=10,
+                fg_color="transparent", hover_color=THEME.sidebar_hover,
+                text_color=THEME.sidebar_text,
+                font=(FONT_FAMILY, 12),
+                command=functools.partial(self.select_page, key),
+            )
+            button.pack(fill="x", pady=3)
+            self._nav_buttons[key] = button
 
-        self._build_header(content_shell)
-        self._build_body(content_shell)
-        self._build_statusbar(content_shell)
+        ctk.CTkLabel(sidebar, text=f"© {datetime.date.today().year}",
+                     text_color=THEME.sidebar_text_dim,
+                     font=(FONT_FAMILY, 8)).pack(side="bottom", anchor="w", padx=18, pady=16)
 
-    def _build_sidebar(self, sidebar):
-        """Contenido del sidebar: marca + navegación + pie."""
-        pad_x = 18
-        # --- Marca superior ---
-        # La imagen queda referenciada por assets (keepalive) mientras la app vive.
-        brand_img = brand_photo(THEME.accent, THEME.on_accent)
-        tk.Label(sidebar, image=brand_img, bg=THEME.sidebar_bg).pack(
-            anchor="w", padx=pad_x, pady=(22, 4))
+        # --- ÁREA DE CONTENIDO ---
+        content = ctk.CTkFrame(self.root, corner_radius=0, fg_color=THEME.surface)
+        content.pack(side="left", fill="both", expand=True)
 
-        tk.Label(sidebar, text="Reportes Financieros",
-                 bg=THEME.sidebar_bg, fg=THEME.sidebar_text,
-                 font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=pad_x)
-        tk.Label(sidebar, text="Departamento Financiero",
-                 bg=THEME.sidebar_bg, fg=THEME.sidebar_text_dim,
-                 font=("Segoe UI", 9)).pack(anchor="w", padx=pad_x, pady=(0, 18))
-
-        # --- Navegación ---
-        nav_list = tk.Frame(sidebar, bg=THEME.sidebar_bg)
-        nav_list.pack(fill=tk.X, pady=(6, 0))
-        for key, label, _sub, chip in self.NAV:
-            self._create_nav_row(nav_list, key, label, chip)
-
-        # --- Pie del sidebar ---
-        tk.Label(sidebar, text=f"© {datetime.date.today().year}",
-                 bg=THEME.sidebar_bg, fg=THEME.sidebar_text_dim,
-                 font=("Segoe UI", 8)).pack(side=tk.BOTTOM, anchor="w", padx=pad_x, pady=14)
-
-    def _create_nav_row(self, parent, key, label, chip):
-        """Fila de navegación: chip + texto + indicador activo.
-
-        MOTIVO: un item clicable de aspecto moderno (hover suave y estado
-        activo resaltado) sin depender de fuentes de iconos externas.
-        """
-        row_bg = THEME.sidebar_bg
-        row = tk.Frame(parent, bg=row_bg, height=42, cursor="hand2")
-        row.pack(fill=tk.X, pady=2)
-        row.pack_propagate(False)
-
-        # Indicador activo (barra vertical de acento).
-        indicator = tk.Frame(row, bg=THEME.sidebar_bg, width=3)
-        indicator.pack(side=tk.LEFT, fill=tk.Y)
-        indicator.pack_propagate(False)
-
-        content = tk.Frame(row, bg=row_bg)
-        content.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 10))
-
-        # Chip redondeado con las iniciales del módulo (ícono seguro).
-        chip_canvas = tk.Canvas(content, width=24, height=24, bg=row_bg,
-                                highlightthickness=0)
-        chip_canvas.pack(side=tk.LEFT, padx=(0, 10))
-        chip_photo = rounded_photo(THEME.sidebar_hover, radius=7, size=24)
-        self._nav_photos[(key, "normal")] = chip_photo
-        chip_active = rounded_photo(THEME.accent, radius=7, size=24)
-        self._nav_photos[(key, "active")] = chip_active
-        chip_img = chip_canvas.create_image(12, 12, image=chip_photo)
-        chip_txt = chip_canvas.create_text(
-            12, 12, text=chip, fill=THEME.sidebar_text,
-            font=("Segoe UI", 8, "bold"))
-
-        label_w = tk.Label(content, text=label, bg=row_bg, fg=THEME.sidebar_text,
-                           font=("Segoe UI", 10))
-        label_w.pack(side=tk.LEFT)
-
-        def _set_colors(bg, txt, chip_photo_img, show_indicator):
-            row.configure(bg=bg)
-            content.configure(bg=bg)
-            chip_canvas.configure(bg=bg)
-            label_w.configure(bg=bg, fg=txt)
-            indicator.configure(bg=THEME.accent if show_indicator else bg)
-            chip_canvas.itemconfigure(chip_img, image=chip_photo_img)
-
-        def on_enter(_e):
-            if self._current != key:
-                _set_colors(THEME.sidebar_hover, THEME.sidebar_text,
-                            self._nav_photos[(key, "normal")], False)
-
-        def on_leave(_e):
-            is_active = self._current == key
-            _set_colors(THEME.sidebar_active if is_active else THEME.sidebar_bg,
-                        THEME.sidebar_text,
-                        self._nav_photos[(key, "active") if is_active else (key, "normal")],
-                        is_active)
-
-        def on_click(_e):
-            self.select_page(key)
-
-        row.bind("<Enter>", on_enter)
-        row.bind("<Leave>", on_leave)
-        row.bind("<Button-1>", on_click)
-        for w in (content, chip_canvas, label_w):
-            w.bind("<Enter>", on_enter)
-            w.bind("<Leave>", on_leave)
-            w.bind("<Button-1>", on_click)
-
-        self._nav_rows[key] = {
-            "row": row, "content": content, "chip": chip_canvas, "label": label_w,
-            "indicator": indicator, "chip_img": chip_img,
-        }
-
-    def _build_header(self, content_shell):
-        """Cabecera superior (blanca) con el título del módulo activo."""
-        header = ttk.Frame(content_shell, style="AppHeader.TFrame", padding=(26, 16))
-        header.pack(fill=tk.X)
-
-        self.header_title = ttk.Label(header, text="", style="PageTitle.TLabel")
+        # Cabecera
+        header = ctk.CTkFrame(content, fg_color="transparent")
+        header.pack(fill="x", padx=28, pady=(20, 6))
+        self.header_title = ctk.CTkLabel(header, text="", text_color=THEME.text,
+                                         font=(FONT_FAMILY, 21, "bold"), anchor="w")
         self.header_title.pack(anchor="w")
-        self.header_sub = ttk.Label(header, text="", style="PageSub.TLabel")
+        self.header_sub = ctk.CTkLabel(header, text="", text_color=THEME.muted,
+                                       font=(FONT_FAMILY, 10), anchor="w")
         self.header_sub.pack(anchor="w", pady=(2, 0))
 
-        ttk.Separator(content_shell).pack(fill=tk.X)
+        ctk.CTkFrame(content, height=1, fg_color=THEME.border).pack(fill="x", padx=28)
 
-    def _build_body(self, content_shell):
-        """Zona central donde se muestran/ocultan las páginas de los módulos."""
-        body = ttk.Frame(content_shell, padding=(18, 14, 18, 0))
-        body.pack(fill=tk.BOTH, expand=True)
-        body.grid_rowconfigure(0, weight=1)
-        body.grid_columnconfigure(0, weight=1)
-
+        # Zona de páginas
+        body = ctk.CTkFrame(content, fg_color=THEME.bg, corner_radius=0)
+        body.pack(fill="both", expand=True, padx=0, pady=(0, 0))
         self.body = body
 
-        # Se crean las 4 vistas (misma lógica de siempre). Se ubican en la misma
-        # celda del grid y se muestran una a la vez según el item del sidebar.
         pages = {
             "convenios": ConveniosAnticiposView(
                 body, self.controllers["convenios"], self.controllers["anticipos"], self),
@@ -270,26 +138,26 @@ class MainWindow:
         }
         for key, page in pages.items():
             self._pages[key] = page
-            page.grid(row=0, column=0, sticky="nsew")
-            page.grid_remove()  # oculto hasta seleccionar
 
-    def _build_statusbar(self, content_shell):
-        """Barra de estado persistente al pie del área de contenido."""
-        status = ttk.Frame(content_shell, style="AppHeader.TFrame", padding=(26, 10, 26, 12))
-        status.pack(fill=tk.X, side=tk.BOTTOM)
+        # Barra de estado inferior
+        status_bar = ctk.CTkFrame(content, fg_color=THEME.surface, corner_radius=0)
+        status_bar.pack(fill="x", side="bottom")
+        ctk.CTkFrame(status_bar, height=1, fg_color=THEME.border).pack(fill="x")
+        row = ctk.CTkFrame(status_bar, fg_color="transparent")
+        row.pack(fill="x", padx=24, pady=(8, 10))
 
-        ttk.Separator(content_shell, orient="horizontal").pack(fill=tk.X, side=tk.BOTTOM)
-
-        # Barra de estado en la parte baja del contenido.
-        self.status_label = ttk.Label(status, text="Estado: Listo", style="Status.TLabel")
-        self.status_label.pack(side=tk.LEFT)
-
-        self.footer_progress = ttk.Progressbar(status, length=180, mode="determinate", maximum=100)
-        self.footer_progress.pack(side=tk.LEFT, padx=16)
-
-        footer_text = f"© {datetime.date.today().year} Departamento Financiero"
-        tk.Label(status, text=footer_text, bg=THEME.surface, fg=THEME.muted,
-                 font=("Segoe UI", 9)).pack(side=tk.RIGHT)
+        self.status_label = ctk.CTkLabel(row, text="Estado: Listo",
+                                         text_color=THEME.muted, font=(FONT_FAMILY, 10))
+        self.status_label.pack(side="left")
+        self.footer_progress = ctk.CTkProgressBar(row, width=220, height=10,
+                                                  corner_radius=5,
+                                                  fg_color=THEME.surface_alt,
+                                                  progress_color=THEME.accent)
+        self.footer_progress.pack(side="left", padx=18)
+        self.footer_progress.set(0)
+        footer = ctk.CTkLabel(row, text=f"© {datetime.date.today().year} Departamento Financiero",
+                              text_color=THEME.muted, font=(FONT_FAMILY, 9))
+        footer.pack(side="right")
 
     def _center_window(self):
         """Centra la ventana en pantalla."""
@@ -309,50 +177,38 @@ class MainWindow:
             return
         self._current = key
 
-        # Cabecera del módulo activo.
-        meta = next((m for m in self.NAV if m[0] == key), None)
-        if meta:
-            self.header_title.config(text=meta[1])
-            self.header_sub.config(text=meta[2])
+        meta = {k: v for k, v in self.NAV}
+        self.header_title.configure(text=meta[key])
+        subs = {
+            "convenios": "Cruce Bancolombia, Efecty, Ecollect y anticipos online",
+            "base_mensual": "Reporte base y novedades / análisis mensual",
+            "centrales": "Reportes Datacrédito y CIFIN - ARPESOD / FINANSUEÑOS",
+            "ecollect": "Generación de planos de clientes y colaboradores",
+        }
+        self.header_sub.configure(text=subs.get(key, ""))
 
-        # Mostrar/ocultar páginas.
         for k, page in self._pages.items():
             if k == key:
-                page.grid()
+                page.pack(fill="both", expand=True, padx=22, pady=14)
             else:
-                page.grid_remove()
+                page.pack_forget()
 
-        # Reflejar el item activo en el sidebar.
-        for k, data in self._nav_rows.items():
-            is_active = (k == key)
-            bg = THEME.sidebar_active if is_active else THEME.sidebar_bg
-            row = data["row"]
-            row.configure(bg=bg)
-            data["content"].configure(bg=bg)
-            data["chip"].configure(bg=bg)
-            data["label"].configure(bg=bg, fg=THEME.sidebar_text)
-            data["indicator"].configure(bg=THEME.accent if is_active else bg)
-            data["chip"].itemconfigure(
-                data["chip_img"],
-                image=self._nav_photos[(k, "active") if is_active else (k, "normal")])
+        for k, button in self._nav_buttons.items():
+            active = (k == key)
+            button.configure(fg_color=THEME.sidebar_active if active else "transparent")
 
     # ------------------------------------------------------------ estado
     @main_thread
     def update_status(self, message: str):
         """Actualiza el texto de estado de la barra inferior."""
-        self.status_label.config(text=f"Estado: {message}")
-        self.root.update_idletasks()
+        self.status_label.configure(text=f"Estado: {message}")
 
     @main_thread
     def update_progress(self, progress: int):
-        """Actualiza la barra de progreso de la barra de estado.
-
-        MOTIVO: antes este método solo imprimía en consola; ahora refleja el
-        avance en la interfaz sin cambiar su firma (compatibilidad total).
-        """
+        """Actualiza la barra de progreso del pie (0-100)."""
         if progress is not None:
-            self.footer_progress.config(value=progress)
-        self.root.update_idletasks()
+            value = max(0.0, min(float(progress) / 100.0, 1.0))
+            self.footer_progress.set(value)
 
     @main_thread
     def update_display(self, message: str, progress: int):

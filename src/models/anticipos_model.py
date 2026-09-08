@@ -6,27 +6,40 @@ class AnticiposConfig:
     """
     Define las REGLAS y PARÁMETROS para generar el reporte de Anticipos.
     Esta clase ahora vive en su propio archivo de modelo.
+
+    MOTIVO DEL CAMBIO: las hojas 'AC FS'/'AC ARP' se reemplazaron por UNA hoja
+    única llamada 'CARTERA' (Identificacion/Documentos/Proyectado Total Con
+    Mora). La empresa se deduce por el prefijo del documento: 'DF' =
+    Finansueños (equivale a AC FS); el resto = Arpesod (equivale a AC ARP).
+    Las columnas CENTRO_COSTO_* y ZONA_COBRADOR_* se conservan en el orden de
+    columnas pero quedan VACÍAS (la hoja nueva no las trae).
     """
-    required_sheets: List[str] = field(default_factory=lambda: ['ONLINE', 'AC FS', 'AC ARP'])
+    required_sheets: List[str] = field(default_factory=lambda: ['ONLINE', 'CARTERA'])
     sheet_columns: Dict[str, List[str]] = field(default_factory=lambda: {
-        'ONLINE': ['MCNTIPCRU1', 'MCNNUMCRU1', 'MCNVINCULA', 'VINNOMBRE', 'SALDODOC'],
-        'AC FS': ['cobra', 'ccosto', 'FACTURA', 'CEDULA', 'saldofac'],
-        'AC ARP': ['cobra', 'ccosto', 'FACTURA', 'CEDULA', 'saldofac']
+        'ONLINE': ['MCNTIPCRU1', 'MCNNUMCRU1', 'MCNVINCULA', 'VINNOMBRE', 'SALDODOC']
     })
     rename_columns: Dict[str, Dict[str, str]] = field(default_factory=lambda: {
         'ONLINE': {
             'MCNTIPCRU1': 'TIPO_RECIBO', 'MCNNUMCRU1': 'No', 'MCNVINCULA': 'CEDULA',
             'VINNOMBRE': 'NOMBRE', 'SALDODOC': 'VALOR'
-        },
-        'AC FS': {
-            'saldofac': 'ULTIMO_SALDO_FS', 'cobra': 'ZONA_COBRADOR_FS',
-            'ccosto': 'CENTRO_COSTO_FS', 'FACTURA': 'FACTURA_FS', 'CEDULA': 'CEDULA'
-        },
-        'AC ARP': {
-            'saldofac': 'ULTIMO_SALDO_ARP', 'cobra': 'ZONA_COBRADOR_ARP',
-            'ccosto': 'CENTRO_COSTO_ARP', 'FACTURA': 'FACTURA_ARP', 'CEDULA': 'CEDULA'
         }
     })
+
+    # --- Hoja única de cartera (CARTERA) ---
+    ac_sheet_name: str = 'CARTERA'
+    ac_columns: Dict[str, str] = field(default_factory=lambda:{
+        'Identificacion': 'CEDULA',
+        'Documentos': 'FACTURA',
+        'Proyectado Total Con Mora': 'saldofac',
+    })
+    ac_fs_prefix: str = 'DF'
+    ac_fs_suffix_map: Dict[str, str] = field(default_factory=lambda:{
+        'CEDULA': 'CEDULA', 'FACTURA': 'FACTURA_FS', 'saldofac': 'ULTIMO_SALDO_FS',
+    })
+    ac_arp_suffix_map: Dict[str, str] = field(default_factory=lambda:{
+        'CEDULA': 'CEDULA', 'FACTURA': 'FACTURA_ARP', 'saldofac': 'ULTIMO_SALDO_ARP',
+    })
+
     output_filename: str = "reporte_anticipos.xlsx"
     column_order_fs: List[str] = field(default_factory=lambda: [
         'ITEM', 'TIPO_RECIBO', 'No', 'CEDULA', 'NOMBRE', 'CENTRO_COSTO_FS',

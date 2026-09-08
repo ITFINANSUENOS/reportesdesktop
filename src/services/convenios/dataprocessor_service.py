@@ -71,7 +71,9 @@ class DataProcessor:
         df['TOTAL_CUENTAS'] = df['CANTIDAD CUENTAS FS'] + df['CANTIDAD CUENTAS ARP']
         factura_original = np.where(df['FACTURA_FS'].notna(), df['FACTURA_FS'], df['FACTURA_ARP'])
         df['FACTURA FINAL'] = np.where(df['TOTAL_CUENTAS'] > 1, 'Mas de una cartera', factura_original).astype(str)
-        df['FACTURA FINAL'].replace('nan', 'SIN CARTERA', inplace=True)
+        # MOTIVO: 'replace(inplace=True)' no se aplica con pandas copy-on-write;
+        # se asigna de forma no-inplace para que 'nan' realmente pase a SIN CARTERA.
+        df['FACTURA FINAL'] = df['FACTURA FINAL'].replace('nan', 'SIN CARTERA')
         
         # Eliminar duplicados basándose en las columnas originales del archivo de pago
         # Nota: Usamos la lógica dinámica para detectar el nombre de la hoja original
@@ -83,9 +85,12 @@ class DataProcessor:
         df.drop_duplicates(subset=list(dfs[original_sheet_name].columns), keep='first', inplace=True)
 
         # Fusión de saldos unificados
+        # MOTIVO DEL CAMBIO: la hoja CARTERA ya no trae 'ccosto' (centro de
+        # costo); solo se unifican FACTURA + SALDO. La columna 'C. Costo' del
+        # reporte queda vacía (la añade el writer si no existe).
         df_saldos_unificados = pd.concat([
-            dfs['AC FS'][['FACTURA_FS', 'SALDO_FS', 'CENTRO_COSTO_FS']].rename(columns={'FACTURA_FS': 'FACTURA', 'SALDO_FS': 'SALDO', 'CENTRO_COSTO_FS': 'CENTRO COSTO'}),
-            dfs['AC ARP'][['FACTURA_ARP', 'SALDO_ARP', 'CENTRO_COSTO_ARP']].rename(columns={'FACTURA_ARP': 'FACTURA', 'SALDO_ARP': 'SALDO', 'CENTRO_COSTO_ARP': 'CENTRO COSTO'})
+            dfs['AC FS'][['FACTURA_FS', 'SALDO_FS']].rename(columns={'FACTURA_FS': 'FACTURA', 'SALDO_FS': 'SALDO'}),
+            dfs['AC ARP'][['FACTURA_ARP', 'SALDO_ARP']].rename(columns={'FACTURA_ARP': 'FACTURA', 'SALDO_ARP': 'SALDO'})
         ], ignore_index=True).drop_duplicates(subset='FACTURA')
         df = self._merge_dataframes(df, df_saldos_unificados, left_on='FACTURA FINAL', right_on='FACTURA')
 

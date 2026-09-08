@@ -47,6 +47,15 @@ def init_logging(log_dir=None) -> Path:
         handle = open(log_file, "a", encoding="utf-8", buffering=1)
         sys.stdout = handle
         sys.stderr = handle
+    else:
+        # Modo consola (desarrollo): la consola de Windows puede ser cp1252 y un
+        # print con emoji lanzaría UnicodeEncodeError. Se fuerza UTF-8 con
+        # sustitución para que NINGÚN print rompa la app.
+        for _stream in (sys.stdout, sys.stderr):
+            try:
+                _stream.reconfigure(encoding="utf-8", errors="replace")
+            except (AttributeError, ValueError):
+                pass
 
     return log_dir
 

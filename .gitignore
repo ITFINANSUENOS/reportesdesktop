@@ -27,3 +27,10 @@ Thumbs.db
 dist/
 build/
 temp_4c029a7c5d2e49058a05b68ab9bdf51a/
+
+# capturas de previsualización de la UI y archivos basura
+_preview*/
+nul
+
+# carpetas de pruebas
+pruebas/

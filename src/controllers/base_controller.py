@@ -77,7 +77,7 @@ class BaseMensualController:
         end_date = view.end_date_entry.get() or None
         lista_final_rutas = [ruta for lista in self.rutas_archivos.values() for ruta in lista]
 
-        view.procesar_button.config(state="disabled")
+        view.procesar_button.configure(state="disabled")
         view.actualizar_estado("Iniciando proceso...", 0)
 
         # 2. Trabajo pesado en un hilo; el progreso llega por actualizar_estado
@@ -114,29 +114,54 @@ class BaseMensualController:
 
     # ------------------------------------------ callbacks (hilo principal)
     def _guardar_y_finalizar(self, result_dataframes, view):
-        """Pide dónde guardar y escribe el archivo (siempre en el hilo principal)."""
-        try:
-            view.actualizar_estado("Esperando para guardar el archivo...", 90)
-            nombre_archivo_salida = filedialog.asksaveasfilename(
-                title="Guardar reporte como...",
-                defaultextension=".xlsx",
-                filetypes=[("Archivos de Excel", "*.xlsx"), ("Todos los archivos", "*.*")],
-                initialfile="Reporte_Base.xlsx",
-            )
+        """Pide dónde guardar (main) y delega la escritura pesada a un worker.
 
-            if not nombre_archivo_salida:
-                view.actualizar_estado("Guardado cancelado por el usuario.", 0)
-                messagebox.showinfo("Cancelado", "La operación de guardado fue cancelada.")
-                return
+        MOTIVO (bug): guardar el Excel con estilos por celda en el hilo principal
+        congelaba la UI y podía hacer que otros workers alcanzaran el timeout.
+        Ahora el diálogo se pide aquí y la escritura corre en un hilo del runner.
+        """
+        runner = getattr(self, "runner", None) or get_default_runner()
+        view.actualizar_estado("Esperando para guardar el archivo...", 90)
 
+        nombre_archivo_salida = filedialog.asksaveasfilename(
+            title="Guardar reporte como...",
+            defaultextension=".xlsx",
+            filetypes=[("Archivos de Excel", "*.xlsx"), ("Todos los archivos", "*.*")],
+            initialfile="Reporte_Base.xlsx",
+        )
+        if not nombre_archivo_salida:
+            view.actualizar_estado("Guardado cancelado por el usuario.", 0)
+            messagebox.showinfo("Cancelado", "La operación de guardado fue cancelada.")
+            self._reactivar_boton(view)
+            return
+
+        def _guardar_ahora():
             self.file_handler_service.save_report_to_excel(nombre_archivo_salida, result_dataframes)
+            return True
+
+        def _ok(_r):
             view.actualizar_estado("¡Éxito! Reporte guardado.", 100)
             messagebox.showinfo("Proceso Completado",
                                 f"El reporte ha sido guardado exitosamente en:\n{nombre_archivo_salida}")
-        except Exception as e:
-            self._manejar_error(e, view)
-        finally:
             self._reactivar_boton(view)
+
+        if runner is None:
+            try:
+                _guardar_ahora()
+                _ok(None)
+            except Exception as e:
+                self._manejar_error(e, view)
+            return
+
+        view.actualizar_estado("Guardando archivo...", 95)
+        if not runner.submit("base_mensual_save", _guardar_ahora,
+                             on_done=_ok, on_error=lambda exc: self._manejar_error(exc, view)):
+            # Fallback ante carrera rara en el runner.
+            try:
+                _guardar_ahora()
+                _ok(None)
+            except Exception as e:
+                self._manejar_error(e, view)
 
     def _manejar_error(self, error, view):
         """Muestra el error y deja la UI lista (hilo principal)."""
@@ -151,6 +176,6 @@ class BaseMensualController:
         """Rehabilita el botón de proceso (solo desde el hilo principal)."""
         if view is not None:
             try:
-                view.procesar_button.config(state="normal")
+                view.procesar_button.configure(state="normal")
             except Exception:
                 pass

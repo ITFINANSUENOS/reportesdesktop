@@ -12,12 +12,49 @@
 #      con @main_thread se ejecutan SIEMPRE en el hilo principal, aunque los
 #      llame un worker.
 #   3. Un guard anti doble-ejecución (decorator @threaded) por proceso.
+#   4. Deshabilitación automática de los botones de acción mientras el proceso
+#      de su clave corre (evita que el usuario genere varios reportes a la vez).
 import functools
 import queue
 import threading
 
 # Referencia al runner por defecto (la asigna la app al arrancar).
 _DEFAULT_RUNNER = None
+
+# Registro de botones de acción por clave de proceso: {clave: [botones]}.
+# Las vistas registran su botón "Generar/Iniciar/Procesar" con register_action_button;
+# TaskRunner los deshabilita al iniciar el proceso y los habilita al terminar.
+_ACTION_BUTTONS = {}
+
+
+def register_action_button(key: str, button) -> None:
+    """Asocia un botón de acción a una clave de proceso.
+
+    MOTIVO: cuando un proceso de esa clave arranca, el botón se deshabilita
+    (aunque el usuario haga clic no se lanza otro reporte); al terminar se
+    habilita de nuevo. Solo se registran los botones que DISPARAN el proceso.
+    """
+    buttons = _ACTION_BUTTONS.setdefault(key, [])
+    if button not in buttons:
+        buttons.append(button)
+    # Si el proceso ya está corriendo (botón creado después), se deja bloqueado.
+    runner = get_default_runner()
+    if runner is not None and runner.is_busy(key):
+        button.configure(state="disabled")
+
+
+def _set_action_buttons(key: str, disabled: bool) -> None:
+    """Deshabilita/habilita los botones registrados para la clave.
+
+    Se usa configure(state=...) porque funciona tanto en widgets ttk como en
+    customtkinter (el botón redondeado de CTk no acepta button.state()).
+    """
+    for button in _ACTION_BUTTONS.get(key, []):
+        try:
+            button.configure(state="disabled" if disabled else "normal")
+        except Exception:
+            # Un botón destruido (ventana cerrada) no debe romper el flujo.
+            pass
 
 
 def on_main_thread() -> bool:
@@ -45,17 +82,36 @@ def run_on_main(fn, *args, **kwargs):
     return runner.call_ui_sync(lambda: fn(*args, **kwargs))
 
 
+def post_to_main(fn, *args, **kwargs):
+    """Encola 'fn' en el hilo principal SIN esperar (fire-and-forget).
+
+    MOTIVO (robustez): los avisos de progreso/estado desde un worker NO deben
+    bloquearlo. Si el hilo principal está ocupado (p. ej. guardando un Excel
+    grande), un update síncrono esperaría y podría alcanzar el timeout. Con
+    encolar sin esperar, el worker avanza y la UI se entera en cuanto puede.
+    """
+    if on_main_thread():
+        fn(*args, **kwargs)
+        return
+    runner = get_default_runner()
+    if runner is None:
+        fn(*args, **kwargs)
+        return
+    runner.post_ui(lambda: fn(*args, **kwargs))
+
+
 def main_thread(method):
     """Decorador para métodos de UI: se re-despachan al hilo principal.
 
     MOTIVO: los métodos que tocan widgets (label.config, progressbar, etc.)
-    deben correr en el hilo principal aunque un worker los invoque.
+    deben correr en el hilo principal aunque un worker los invoque. Como el
+    resultado no se necesita, se encolan SIN bloquear al worker.
     """
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         if on_main_thread():
             return method(self, *args, **kwargs)
-        return run_on_main(lambda: method(self, *args, **kwargs))
+        return post_to_main(lambda: method(self, *args, **kwargs))
     return wrapper
 
 
@@ -100,7 +156,13 @@ def threaded(key):
             def _finish(_payload=None):
                 getattr(self, "_tb_busy", set()).discard(key)
 
-            runner.submit(key, _worker_body, on_done=_finish, on_error=_finish)
+            # MOTIVO (robustez): si submit devuelve False (carrera rara en el
+            # runner), liberamos la marca local para no dejar la key 'pegada'.
+            if not runner.submit(key, _worker_body, on_done=_finish, on_error=_finish):
+                busy.discard(key)
+                from tkinter import messagebox
+                run_on_main(lambda: messagebox.showwarning(
+                    "Proceso en curso", "Ya hay un proceso de este tipo ejecutándose."))
             return None
         return wrapper
     return decorator
@@ -168,6 +230,8 @@ class TaskRunner:
             return False
         self._busy.add(key)
         self._callbacks[key] = (on_done, on_error)
+        # Deshabilitar los botones de acción de esta clave mientras corre.
+        _set_action_buttons(key, True)
 
         def _run():
             try:
@@ -182,6 +246,10 @@ class TaskRunner:
         self._threads.add(thread)
         thread.start()
         return True
+
+    def post_ui(self, fn) -> None:
+        """Encola 'fn' para el hilo principal sin esperar (fire-and-forget)."""
+        self._queue.put(("_ui", fn))
 
     def call_ui_sync(self, fn):
         """
@@ -203,8 +271,10 @@ class TaskRunner:
                 event.set()
 
         self._queue.put(("_ui", _execute))
-        # Espera finita: nunca dejar un worker colgado si la app cierra.
-        event.wait(60)
+        # MOTIVO: 600 s (antes 60) para no lanzar TimeoutError si el usuario
+        # tarda en un diálogo abierto desde un worker. Los diálogos normales se
+        # cierran en segundos; el tope solo evita un worker colgado para siempre.
+        event.wait(600)
         if "error" in box:
             raise box["error"]
         if "result" in box:
@@ -242,11 +312,15 @@ class TaskRunner:
             key, value = item[1], item[2]
             if kind == "_done":
                 self._busy.discard(key)
+                # Rehabilitar botones de la clave al terminar con éxito.
+                _set_action_buttons(key, False)
                 on_done, _ = self._callbacks.pop(key, (None, None))
                 if on_done:
                     on_done(value)
             elif kind == "_error":
                 self._busy.discard(key)
+                # Rehabilitar botones de la clave aunque el proceso falle.
+                _set_action_buttons(key, False)
                 _, on_error = self._callbacks.pop(key, (None, None))
                 if on_error:
                     on_error(value)
